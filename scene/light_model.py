@@ -116,7 +116,8 @@ class LightNet(nn.Module):
 
    
     def pretrain_ae(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
-                    verbose=False, tensorboard_writer=None, return_losses = False, output_path=None):
+                    verbose=False, tensorboard_writer=None,
+                    progress_bar=None, return_losses = False, output_path=None):
         self.cuda()
         loss_ = self.ae_loss()
         losses_tr_all = []
@@ -124,7 +125,6 @@ class LightNet(nn.Module):
         optim = self.get_optimizer()
 
         for epoch in range(num_epochs):
-            torch.cuda.empty_cache()
             self.train()
             losses_tr = []
             train_iter, test_iter = load_train_test(datapath=data_path, resize_dim=resize_dim, batch_size=batch_size)
@@ -139,7 +139,7 @@ class LightNet(nn.Module):
                 optim.step() 
                 losses_tr.append(mse.detach().cpu().item())
             losses_tr_all.append(np.mean(losses_tr))
-            if (verbose and tensorboard_writer):
+            if (tensorboard_writer):
                 tensorboard_writer.add_scalar('train loss',
                                 losses_tr_all[epoch],
                                 epoch)
@@ -152,16 +152,23 @@ class LightNet(nn.Module):
                     reconstructed_input = self(input, pretraining=True)
                     mse = loss_(reconstructed_input, input)
                     losses_test.append(mse.detach().cpu().item())
+            torch.cuda.empty_cache()
             losses_test_all.append(np.mean(losses_test))
-            if (verbose and tensorboard_writer):
+            if tensorboard_writer:
                 tensorboard_writer.add_scalar('test loss',
                             losses_test_all[epoch],
                             epoch)
-            elif verbose:
+            if verbose:
                 print(f"Epoch: {epoch}, train loss: {losses_tr_all[epoch]}, test_loss: {losses_test_all[epoch]}")
+            elif progress_bar:
+                if epoch % 5 == 0:
+                    progress_bar.set_postfix({"Loss test": f"{losses_test_all[epoch]:.{4}f}"})
+                    progress_bar.update(5)
+                if epoch == num_epochs -1:
+                    progress_bar.close()
+
         if output_path:
             self.save_weights(output_path, epoch)
         
         if return_losses: 
             return [losses_test_all, losses_tr_all]
-     
