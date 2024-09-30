@@ -105,6 +105,7 @@ class OptimizationParams(ParamGroup):
         self.roughness_lr = 0.0002
         self.envlight_lr = 0.001
         self.envlight_wd = 1e-5
+        self.envlight_pretrain_epochs = 50
         self.normal_reg_from_iter = 0
         self.normal_reg_util_iter = 30_000
         self.lambda_zero_one = 1e-3
