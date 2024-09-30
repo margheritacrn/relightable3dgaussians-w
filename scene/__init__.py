@@ -86,6 +86,7 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"),
                                               og_number_points=len(scene_info.point_cloud.points))
+            
             if self.gaussians.brdf:  #TODO: edit here with light_env
                 fn = os.path.join(self.model_path,
                                 "brdf_mlp",
