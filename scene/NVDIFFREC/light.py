@@ -145,7 +145,6 @@ class EnvironmentLight(torch.nn.Module):
             diffuse_raw = diffuse
             roughness = kr
             specularity  = ks
-            # diff_col  = 1.0 - ks
         else:
             raise NotImplementedError
 
@@ -156,9 +155,6 @@ class EnvironmentLight(torch.nn.Module):
             reflvec = ru.xfm_vectors(reflvec.view(reflvec.shape[0], reflvec.shape[1] * reflvec.shape[2], reflvec.shape[3]), mtx).view(*reflvec.shape)
             nrmvec  = ru.xfm_vectors(nrmvec.view(nrmvec.shape[0], nrmvec.shape[1] * nrmvec.shape[2], nrmvec.shape[3]), mtx).view(*nrmvec.shape)
 
-        #ambient = dr.texture(self.diffuse[None, ...], nrmvec.contiguous(), filter_mode='linear', boundary_mode='cube')
-        # specular_linear = ambient * specular_tint
-        #specular_linear = ambient * diff_col
 
         if specular:
             # Lookup FG term from lookup texture
@@ -175,7 +171,10 @@ class EnvironmentLight(torch.nn.Module):
 
             # Compute aggregate lighting
             reflectance_brdf = specularity * fg_lookup[...,0:1] + fg_lookup[...,1:2] 
-            specular_linear = specularity * reflectance_brdf  # TODO specular_linear = specularity*(reflectance_brdf) * (incoming_light_blurred basing on roughness) query incoming light in reflvec
+            specular_linear = specularity * reflectance_brdf  
+            # TODO specular_linear = specularity*(reflectance_brdf) * (incoming_light_blurred basing on roughness) query incoming light in reflvec
+            # specular_light = apply_blur_filter(incoming_light, roguhness)
+            # specular_linear = specularity*reflectance_brdf*specular_light
         extras = {"specular": specular_linear}
 
         diffuse_linear = torch.sigmoid(diffuse_raw - np.log(3.0))

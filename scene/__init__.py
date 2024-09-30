@@ -20,18 +20,21 @@ from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import torch
 from utils.system_utils import mkdir_p
 from scene.NVDIFFREC import save_env_map, load_env
+from scene.light_model import LightNet
 
 class Scene:
 
     gaussians : GaussianModel
+    envlight: LightNet
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, envlight : LightNet, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
+        self.envlight = envlight
 
         if load_iteration:
             if load_iteration == -1:
@@ -83,7 +86,7 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"),
                                               og_number_points=len(scene_info.point_cloud.points))
-            if self.gaussians.brdf:
+            if self.gaussians.brdf:  #TODO: edit here with light_env
                 fn = os.path.join(self.model_path,
                                 "brdf_mlp",
                                 "iteration_" + str(self.loaded_iter),
@@ -93,7 +96,7 @@ class Scene:
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
-    def save(self, iteration):
+    def save(self, iteration): #TODO: edit here
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
         if self.gaussians.brdf:

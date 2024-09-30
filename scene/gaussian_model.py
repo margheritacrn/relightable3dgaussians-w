@@ -22,6 +22,7 @@ from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view
 import open3d as o3d
 from scene.NVDIFFREC import create_trainable_env_rnd, load_env
+# TODO: here I think that I don´t need the lightnet, because is per image not per Gaussian
 
 class GaussianModel:
     def __init__(self, sh_degree : int):
@@ -175,7 +176,7 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def training_setup(self, training_args):
+    def training_setup(self, envlight, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -187,26 +188,21 @@ class GaussianModel:
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr*self.spatial_lr_scale, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
-            # {'params': list(self.brdf_mlp.parameters()), 'lr': training_args.brdf_mlp_lr_init, "name": "brdf_mlp"},
             {'params': [self._roughness], 'lr': training_args.roughness_lr, "name": "roughness"},
             {'params': [self._specular], 'lr': training_args.specular_lr, "name": "specular"},
-            {'params': [self._normal], 'lr': training_args.normal_lr, "name": "normal"} 
+            {'params': [self._normal], 'lr': training_args.normal_lr, "name": "normal"},
+            {'params': [envlight], 'lr': training_args.envlight_lr, 'weight_decay': training_args.envlight_wd, "name": 'envlight'}
         ]
         self._normal2.requires_grad_(requires_grad=False)
         l.extend([
             {'params': [self._normal2], 'lr': training_args.normal_lr, "name": "normal2"},
         ])
 
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
+        self.optimizer = torch.optim.Adam(l, lr=0.01, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
-        """self.brdf_mlp_scheduler_args = get_expon_lr_func(lr_init=training_args.brdf_mlp_lr_init,
-                                        lr_final=training_args.brdf_mlp_lr_final,
-                                        lr_delay_mult=training_args.brdf_mlp_lr_delay_mult,
-                                        max_steps=training_args.brdf_mlp_lr_max_steps)
-        """
 
     def training_setup_SHoptim(self, training_args):
         self.percent_dense = training_args.percent_dense
@@ -220,15 +216,9 @@ class GaussianModel:
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         
         self.f_rest_scheduler_args = get_const_lr_func(training_args.feature_lr / 20.0)
-        """if not self.fix_brdf_lr:
-            self.f_rest_scheduler_args = get_expon_lr_func(lr_init=training_args.feature_lr / 20.0,
-                                        lr_final=training_args.feature_lr_final / 20.0,
-                                        lr_delay_steps=30000, 
-                                        lr_delay_mult=training_args.brdf_mlp_lr_delay_mult,
-                                        max_steps=40000)
-                                        # max_steps=training_args.iterations)"""
-        
 
+        
+    """
     def _update_learning_rate(self, iteration, param):
         for param_group in self.optimizer.param_groups:
             if param_group["name"] == param:
@@ -238,14 +228,21 @@ class GaussianModel:
                     return lr
                 except AttributeError:
                     pass
-
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
         self._update_learning_rate(iteration, "xyz")
-        """if self.brdf and not self.fix_brdf_lr:
-            for param in ["brdf_mlp","roughness","specular","normal","f_dc", "f_rest"]:
+        for param in ["envlight","roughness","specular","normal","f_dc", "f_rest"]:
                 lr = self._update_learning_rate(iteration, param)
-        """
+    """
+
+    def update_learning_rate(self, iteration):
+        ''' Learning rate scheduling per step '''
+        for param_group in self.optimizer.param_groups:
+            if param_group["name"] == "xyz":
+                lr = self.xyz_scheduler_args(iteration)
+                param_group['lr'] = lr
+                return lr
+
 
     def construct_list_of_attributes(self, viewer_fmt=False):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
@@ -368,7 +365,7 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "brdf_mlp":  # TODO need to edit this with LightNet?
+            if group["name"] == "envlight":
                 continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -385,7 +382,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "brdf_mlp": # TODO need to edit this with LightNet?
+            if group["name"] == "envlight":
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
@@ -425,7 +422,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "brdf_mlp": # TODO need to edit this with LightNet?
+            if group["name"] == "env_light":
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]

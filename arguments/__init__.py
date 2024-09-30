@@ -54,9 +54,6 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
-        self.brdf_dim = 0
-        self.brdf_mode = "envmap"
-        self.brdf_envmap_res = 512
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -106,6 +103,8 @@ class OptimizationParams(ParamGroup):
         self.normal_lr = 0.0002
         self.specular_lr = 0.0002
         self.roughness_lr = 0.0002
+        self.envlight_lr = 0.001
+        self.envlight_wd = 1e-5
         self.normal_reg_from_iter = 0
         self.normal_reg_util_iter = 30_000
         self.lambda_zero_one = 1e-3

@@ -24,18 +24,23 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import time
+from scene.light_model import LightNet
+
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = False # deactivate tensorboard for gpu cluster
 except ImportError:
     TENSORBOARD_FOUND = False
 
+
 def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     tb_writer = prepare_output_and_logger(dataset)
-    gaussians = GaussianModel(dataset.sh_degree, dataset.brdf_dim, dataset.brdf_mode, dataset.brdf_envmap_res)
+    gaussians = GaussianModel(dataset.sh_degree)
+    envlight = LightNet()
 
-    scene = Scene(dataset, gaussians)
-    gaussians.training_setup(opt)
+    scene = Scene(dataset, gaussians, envlight)
+    gaussians.training_setup(envlight=envlight, training_args=opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")

@@ -116,3 +116,5 @@ def RGB2SH(rgb):
 
 def SH2RGB(sh):
     return sh * C0 + 0.5
+
+#TODO add function that convolves SH with a Blur filter (Gaussian blur). Ask as input standard deviation.
