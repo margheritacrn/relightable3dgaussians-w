@@ -25,11 +25,11 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import time
 from scene.light_model import LightNet
-
+#TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 
 try:
     from torch.utils.tensorboard import SummaryWriter
-    TENSORBOARD_FOUND = False # deactivate tensorboard for gpu cluster
+    TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
 
@@ -47,6 +47,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
 
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
+
+    # pretrain envlight AE
+    progress_bar_light_ae = tqdm(range(1, opt.envlight_ae_epochs + 1), desc = "Env light ae pretraining progress")
+    envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_ae_epochs,
+                         progress_bar=progress_bar_light_ae, return_losses = False, output_path=dataset.model_path)
+    # freeze layers of envlight model corresponding to the AE
+    for param_name, param in envlight.named_parameters():
+        if ('encoder' or 'decoder' in param_name):
+            param.requires_grad = False
+
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
