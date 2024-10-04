@@ -3,3 +3,4 @@
 *.ipynb
 train_lightNet.py
 __pycache__
+.vscode/
