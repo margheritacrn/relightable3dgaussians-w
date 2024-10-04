@@ -1,0 +1,31 @@
+name: relit3dgaussiansW
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+
+  - pytorch=2.3
+  - pytorch-cuda=12.1
+
+  - torchaudio
+  - torchvision
+  - typing_extensions
+  - ffmpeg=4.2.2
+  - pip:
+    - submodules/simple-knn
+    - submodules/diff-gaussian-rasterization
+    - imageio
+    - pillow
+    - open3d
+    - mediapy
+    - lpips
+    - scikit-image
+    - tqdm
+    - trimesh
+    - plyfile
+    - opencv-python
+    - ninja  
