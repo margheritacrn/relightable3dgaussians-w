@@ -25,7 +25,7 @@ class LightNet(nn.Module):
     After pretraining, the MLP takes as input the features extracted by the encoder and returns SH coefficients representing
     the environment light.
     """
-    def __init__(self, latent_dim: int = 24, kernel_size: int = 3,
+    def __init__(self, latent_dim: int = 5, kernel_size: int = 3,
                  channels_f: int = 128,
                  dense_layer_size: int = 64, sh_degree: int = 2, input_shape: int =256):
         super().__init__()
@@ -56,7 +56,6 @@ class LightNet(nn.Module):
                                     )
         self.encoder_dense = nn.Linear(enc_end_shape, self.latent_dim)
 
-        self.decoder_dense = nn.Linear(self.latent_dim, enc_end_shape)
         self.decoder_conv = nn.Sequential(
                                      nn.ConvTranspose2d(self.channels_f, self.channels_f,  self.kernel_size, stride=2, padding=1, output_padding=1),
                                      nn.BatchNorm2d(self.channels_f),
@@ -71,9 +70,10 @@ class LightNet(nn.Module):
                                      nn.BatchNorm2d(3),
                                      nn.ReLU()
                                      )
+        self.decoder_dense = nn.Linear(2**self.latent_dim, enc_end_shape)
 
         self.mlp = nn.Sequential(
-            nn.Linear(self.latent_dim, self.dense_layer_size),
+            nn.Linear(2**self.latent_dim, self.dense_layer_size),
             nn.Dropout(p=0.2),
             nn.ReLU(), 
             nn.Linear(self.dense_layer_size, self.dense_layer_size),
@@ -117,7 +117,8 @@ class LightNet(nn.Module):
    
     def pretrain_ae(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
                     verbose=False, tensorboard_writer=None,
-                    progress_bar=None, return_losses = False, output_path=None):
+                    progress_bar=None, output_path=None, return_losses=False,
+                    return_data_transf=False):
         self.cuda()
         loss_ = self.ae_loss()
         losses_tr_all = []
@@ -127,7 +128,7 @@ class LightNet(nn.Module):
         for epoch in range(num_epochs):
             self.train()
             losses_tr = []
-            train_iter, test_iter = load_train_test(datapath=data_path, resize_dim=resize_dim, batch_size=batch_size)
+            train_iter, test_iter, data_transforms = load_train_test(datapath=data_path, resize_dim=resize_dim, batch_size=batch_size)
 
             for batch in train_iter:
                 optim.zero_grad() 
@@ -140,7 +141,7 @@ class LightNet(nn.Module):
                 losses_tr.append(mse.detach().cpu().item())
             losses_tr_all.append(np.mean(losses_tr))
             if (tensorboard_writer):
-                tensorboard_writer.add_scalar('train loss',
+                tensorboard_writer.add_scalar('train loss- ae',
                                 losses_tr_all[epoch],
                                 epoch)
 
@@ -155,7 +156,7 @@ class LightNet(nn.Module):
             torch.cuda.empty_cache()
             losses_test_all.append(np.mean(losses_test))
             if tensorboard_writer:
-                tensorboard_writer.add_scalar('test loss',
+                tensorboard_writer.add_scalar('test loss- ae',
                             losses_test_all[epoch],
                             epoch)
             if verbose:
@@ -170,5 +171,14 @@ class LightNet(nn.Module):
         if output_path:
             self.save_weights(output_path, epoch)
         
-        if return_losses: 
-            return [losses_test_all, losses_tr_all]
+        if return_losses:
+            out = [losses_test_all, losses_tr_all]
+            if return_data_transf:
+                out.append(data_transforms)
+                return out
+            else:
+                return out
+        elif return_data_transf:
+            return data_transforms
+        else:
+            pass

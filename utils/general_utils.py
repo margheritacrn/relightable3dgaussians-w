@@ -151,3 +151,11 @@ def flip_align_view(normal, viewdir):
     non_flip = dotprod>=0 # (N, 1)
     normal_flipped = normal*torch.where(non_flip, 1, -1) # (N, 3)
     return normal_flipped, non_flip
+
+
+def get_homogeneous(points): # get 4D representation with 1 as w coord for set of points.
+    """
+    homogeneous points
+    :param points: [..., 3]
+    """
+    return torch.cat([points, torch.ones_like(points[..., :1])], dim=-1)

@@ -56,4 +56,4 @@ def load_train_test(datapath: str, resize_dim: int = 256, batch_size: int =1, sh
     train_iter = iter(trainloader)
     test_iter = iter(testloader)
 
-    return train_iter, test_iter
+    return train_iter, test_iter, transforms_test

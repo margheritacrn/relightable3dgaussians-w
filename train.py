@@ -26,6 +26,9 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import time
 from scene.light_model import LightNet
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
+#NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
+#TODO: find a better name to wild_envlight
+
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -37,10 +40,20 @@ except ImportError:
 def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    envlight = LightNet()
+    wild_envlight = LightNet()
 
-    scene = Scene(dataset, gaussians, envlight)
-    gaussians.training_setup(envlight=envlight, training_args=opt)
+    # pretrain envlight AE
+    progress_bar_light_ae = tqdm(range(1, opt.envlight_ae_epochs + 1), desc = "Env light ae pretraining progress")
+    data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_ae_epochs,
+                                                   tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
+                                                   return_losses = False, output_path=dataset.model_path, return_data_transf=True)
+    # freeze layers of wild_envlight model corresponding to the AE
+    for param_name, param in wild_envlight.named_parameters():
+        if ('encoder' or 'decoder' in param_name):
+            param.requires_grad = False
+
+    scene = Scene(dataset, gaussians, wild_envlight)
+    gaussians.training_setup(envlight=wild_envlight, training_args=opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -48,20 +61,12 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     iter_start = torch.cuda.Event(enable_timing = True)
     iter_end = torch.cuda.Event(enable_timing = True)
 
-    # pretrain envlight AE
-    progress_bar_light_ae = tqdm(range(1, opt.envlight_ae_epochs + 1), desc = "Env light ae pretraining progress")
-    envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_ae_epochs,
-                         progress_bar=progress_bar_light_ae, return_losses = False, output_path=dataset.model_path)
-    # freeze layers of envlight model corresponding to the AE
-    for param_name, param in envlight.named_parameters():
-        if ('encoder' or 'decoder' in param_name):
-            param.requires_grad = False
-
 
     viewpoint_stack = None
     ema_loss_for_log = 0.0
     progress_bar = tqdm(range(opt.iterations), desc="Training progress")
     for iteration in range(1, opt.iterations + 1): 
+        """
         if network_gui.conn == None:
             network_gui.try_connect()
         while network_gui.conn != None:
@@ -76,6 +81,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
                     break
             except Exception as e:
                 network_gui.conn = None
+        """
 
         iter_start.record()
 
@@ -86,19 +92,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
-        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1)) 
+        viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        gt_image = viewpoint_cam.original_image.cuda()
 
-        if pipe.brdf:
-            gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
-            gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
-            if gaussians.brdf_mode=="envmap":
-                gaussians.brdf_mlp.build_mips()
+        gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
+        gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
+        # get SH coefficients of environment light for current gt image
+        envlight_sh = envlight(data_transforms_envlight(gt_image))
 
         # Render
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, debug=False)
+        render_pkg = render(viewpoint_cam, gaussians, envlight_sh, pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         losses_extra = {}
-        if pipe.brdf and iteration > opt.normal_reg_from_iter:
+        if iteration > opt.normal_reg_from_iter:
             if iteration<opt.normal_reg_util_iter:
                 losses_extra['predicted_normal'] = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"])
             losses_extra['zero_one'] = zero_one_loss(render_pkg["alpha"])
@@ -107,7 +113,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
                 losses_extra['delta_reg'] = delta_normal_loss(render_pkg["delta_normal_norm"], render_pkg["alpha"])
 
         # Loss
-        gt_image = viewpoint_cam.original_image.cuda()
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         for k in losses_extra.keys():
@@ -130,7 +135,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
 
             # Log and save
             losses_extra['psnr'] = psnr(image, gt_image).mean()
-            training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (envlight_sh, pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -146,14 +151,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
 
-            # Optimizer step
+            # Optimizer step: for both gaussians parameters and envlight MLP (per-image)
             if iteration < opt.iterations:
                 gaussians.optimizer.step()
                 gaussians.optimizer.zero_grad(set_to_none = True)
                 gaussians.update_learning_rate(iteration)
-
-            if pipe.brdf and pipe.brdf_mode=="envmap":
-                gaussians.brdf_mlp.clamp_(min=0.0, max=1.0)
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
@@ -233,6 +235,8 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
+            tb_writer.add_histogram("scene/roughness_histogram", scene.gaussians.get_roughness, iteration)
+            tb_writer.add_histogram("scene/specularity_histogram", scene.gaussians.get_specularity, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 

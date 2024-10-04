@@ -22,15 +22,17 @@
 #  POSSIBILITY OF SUCH DAMAGE.
 
 import torch
+import numpy as np
+# coefficients to evaluate Y_lm(phi,theta) using cartesian coordinates, with l>=0 and -l<=m<=l (l in N, m in Z)
 
-C0 = 0.28209479177387814
-C1 = 0.4886025119029199
+C0 = 0.28209479177387814   # Y_00
+C1 = 0.4886025119029199    # Y_11, Y_10 Y_1-1
 C2 = [
-    1.0925484305920792,
+    1.0925484305920792, # Y_21,- Y_2-1, Y_2-2
     -1.0925484305920792,
-    0.31539156525252005,
+    0.31539156525252005, # Y_20
     -1.0925484305920792,
-    0.5462742152960396
+    0.5462742152960396   # Y_22
 ]
 C3 = [
     -0.5900435899266435,
@@ -117,4 +119,20 @@ def RGB2SH(rgb):
 def SH2RGB(sh):
     return sh * C0 + 0.5
 
-#TODO add function that convolves SH with a Blur filter (Gaussian blur). Ask as input standard deviation.
+def gauss_weierstrass_kernel(roughness, sh_degree):
+    """The function computes the sh_dim coefficients of
+    Gauss Weierstrass kernel for smoothing in SH domain.
+    """
+    l_idxs = torch.arange(sh_degree + 1, dtype=torch.float32).view(1, -1)
+    gw_kernel_sh = torch.zeros((roughness.shape[0],(sh_degree + 1)**2))
+    gw_kernel_sh_l = torch.exp(-l_idxs*(l_idxs+1)*(roughness**2))
+    for l in range(l_idxs.shape[0]):
+        if l == 0:
+            gw_kernel_sh[..., l] = gw_kernel_sh_l[l]
+            continue
+        gw_kernel_sh[..., l**2:(l+1)**2] = gw_kernel_sh_l[l]
+        
+
+    return gw_kernel_sh
+
+

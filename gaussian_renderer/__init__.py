@@ -17,7 +17,11 @@ from utils.sh_utils import eval_sh
 from utils.graphics_utils import normal_from_depth_image
 from utils.general_utils import flip_align_view
 from scene.NVDIFFREC import extract_env_map
+from scene.NVDIFFREC import load_sh_env
 import numpy as np
+#TODO: edit render lighting and shade function (rewrite)
+#TODO: remove references to brdf
+#TODO: consider whether to add metallic_color to the rendered outputs
 
 def rendered_world2cam(viewpoint_cam, normal, alpha, bg_color):
     # normal: (3, H, W), alpha: (H, W), bg_color: (3)
@@ -60,7 +64,7 @@ def normalize_normal_inplace(normal, alpha):
     fg_mask = (alpha[None,...]>0.).repeat(3, 1, 1)
     normal = torch.where(fg_mask, torch.nn.functional.normalize(normal, p=2, dim=0), normal)
 
-def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=False, speed=False):
+def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=False, speed=False):
     """
     Render the scene. 
     
@@ -124,38 +128,24 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     shs = None
     colors_precomp = None
     if colors_precomp is None:
-        if pipe.brdf:
-            color_delta = None
-            delta_normal_norm = None
-            if pipe.brdf_mode=="envmap":
-                gb_pos = pc.get_xyz # (N, 3) 
-                view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
+        envlight = load_sh_env(envlight_sh)
+        delta_normal_norm = None
+        gb_pos = pc.get_xyz # (N, 3) 
+        view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
 
-                diffuse   = pc.get_diffuse # (N, 3) 
-                normal, delta_normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized, return_delta=True) # (N, 3) 
-                delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
-                specular  = pc.get_specular # (N, 3) 
-                roughness = pc.get_roughness # (N, 1) 
-                color, brdf_pkg = pc.brdf_mlp.shade_ref(gb_pos[None, None, ...], normal[None, None, ...], diffuse[None, None, ...], specular[None, None, ...], roughness[None, None, ...], view_pos[None, None, ...])
+        albedo   = pc.get_albedo # (N, 1) 
+        normal, delta_normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized, return_delta=True) # (N, 3) 
+        delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
+        specular  = pc.get_specular # (N, 3) 
+        roughness = pc.get_roughness # (N, 1) 
+        metalness = pc.get_metalness # (N,1)
+        color, brdf_pkg = envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...], specular[None, None, ...], roughness[None, None, ...], metalness[None, None, ...], view_pos[None, None, ...])
 
-                colors_precomp = color.squeeze() # (N, 3) 
-                diffuse_color = brdf_pkg['diffuse'].squeeze() # (N, 3) 
-                specular_color = brdf_pkg['specular'].squeeze() # (N, 3) 
+        colors_precomp = color.squeeze() # (N, 3) 
+        diffuse_color = brdf_pkg['diffuse'].squeeze() # (N, 3) 
+        specular_color = brdf_pkg['specular'].squeeze() # (N, 3) 
 
-                if pc.brdf_dim>0:
-                    shs_view = pc.get_brdf_features.view(-1, 3, (pc.brdf_dim+1)**2)
-                    dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1))
-                    dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-                    sh2rgb = eval_sh(pc.brdf_dim, shs_view, dir_pp_normalized)
-                    color_delta = sh2rgb
-                    # try to treat residual color as diffuse color, thus apply activation function
-                    color_delta_linear = torch.sigmoid(color_delta - np.log(3.0))
-                    colors_precomp += color_delta_linear
-
-            else:
-                raise NotImplementedError
-
-        elif pipe.convert_SHs_python:
+        if pipe.convert_SHs_python:
             shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
             dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
@@ -189,20 +179,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         if debug: 
             normal_axis_normed = 0.5*normal_axis + 0.5  # range (-1, 1) -> (0, 1)
             render_extras.update({"normal_axis": normal_axis_normed})
-        if pipe.brdf:
-            normal_normed = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
-            render_extras.update({"normal": normal_normed})
-            if delta_normal_norm is not None:
-                render_extras.update({"delta_normal_norm": delta_normal_norm.repeat(1, 3)})
-            if debug:
-                render_extras.update({
-                    "diffuse": diffuse, 
-                    "specular": specular, 
-                    "roughness": roughness.repeat(1, 3), 
-                    "diffuse_color": diffuse_color, 
-                    "specular_color": specular_color, 
-                    "color_delta": color_delta,  
-                    })
+        normal_normed = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
+        render_extras.update({"normal": normal_normed})
+        if delta_normal_norm is not None:
+            render_extras.update({"delta_normal_norm": delta_normal_norm.repeat(1, 3)})
+        if debug:
+            render_extras.update({
+                "diffuse": diffuse, 
+                "specular": specular, 
+                "roughness": roughness.repeat(1, 3), 
+                "diffuse_color": diffuse_color, 
+                "specular_color": specular_color
+                })
         
         out_extras = {}
         for k in render_extras.keys():
@@ -251,14 +239,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     
         # Render normal from depth image, and alpha blend with the background. 
         out_extras["normal_ref"] = render_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color=bg_color, alpha=out_extras['alpha'][0])
+        normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
         if debug:
             out_extras["normal_ref_cam"] = rendered_world2cam(viewpoint_camera, out_extras["normal_ref"], out_extras['alpha'][0], bg_color)
             out_extras["normal_axis_cam"] = rendered_world2cam(viewpoint_camera, out_extras["normal_axis"], out_extras['alpha'][0], bg_color)
-        
-        if pipe.brdf:
-            normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
-            if debug:
-                out_extras["normal_cam"] = rendered_world2cam(viewpoint_camera, out_extras["normal"], out_extras['alpha'][0], bg_color)
+            out_extras["normal_cam"] = rendered_world2cam(viewpoint_camera, out_extras["normal"], out_extras['alpha'][0], bg_color)
+
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.

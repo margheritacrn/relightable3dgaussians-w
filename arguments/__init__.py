@@ -103,6 +103,8 @@ class OptimizationParams(ParamGroup):
         self.normal_lr = 0.0002
         self.specular_lr = 0.0002
         self.roughness_lr = 0.0002
+        self.metalness_lr = 0.0002
+        self.albedo_lr = 0.0002
         self.envlight_lr = 0.001
         self.envlight_wd = 1e-5
         self.envlight_pretrain_epochs = 50
