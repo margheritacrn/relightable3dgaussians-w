@@ -8,11 +8,11 @@ dependencies:
   - python=3.10
   - pip
 
-  - pytorch=2.3
+  - pytorch=2.4
   - pytorch-cuda=12.1
 
   - torchaudio
-  - torchvision
+  - torchvision=0.19.0
   - typing_extensions
   - ffmpeg=4.2.2
   - pip:
@@ -28,4 +28,5 @@ dependencies:
     - trimesh
     - plyfile
     - opencv-python
-    - ninja  
+    - ninja
+    - tensorboard 
