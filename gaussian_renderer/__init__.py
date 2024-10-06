@@ -16,7 +16,7 @@ from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 from utils.graphics_utils import normal_from_depth_image
 from utils.general_utils import flip_align_view
-from scene.NVDIFFREC import extract_env_map
+# from scene.NVDIFFREC import extract_env_map
 from scene.NVDIFFREC import load_sh_env
 import numpy as np
 #TODO: edit render lighting and shade function (rewrite)
@@ -133,7 +133,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pip
         gb_pos = pc.get_xyz # (N, 3) 
         view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
 
-        albedo   = pc.get_albedo # (N, 1) 
+        albedo   = pc.get_albedo # (N, 3)
         normal, delta_normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized, return_delta=True) # (N, 3) 
         delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
         specular  = pc.get_specular # (N, 3) 
@@ -145,7 +145,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pip
         diffuse_color = brdf_pkg['diffuse'].squeeze() # (N, 3) 
         specular_color = brdf_pkg['specular'].squeeze() # (N, 3) 
 
-        if pipe.convert_SHs_python:
+        """if pipe.convert_SHs_python:
             shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
             dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
@@ -153,6 +153,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pip
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
             shs = pc.get_features
+        """
     else:
         colors_precomp = override_color
 
