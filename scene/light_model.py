@@ -16,7 +16,6 @@ def init_weights(l):
         if isinstance(l, nn.Linear):
             torch.nn.init.xavier_normal_(l.weight) 
             l.bias.data.fill_(0.01)
-            print(l.weight.shape, l.bias.shape)
 
 
 class LightNet(nn.Module):
@@ -27,7 +26,7 @@ class LightNet(nn.Module):
     """
     def __init__(self, latent_dim: int = 5, kernel_size: int = 3,
                  channels_f: int = 128,
-                 dense_layer_size: int = 64, sh_degree: int = 2, input_shape: int =256):
+                 dense_layer_size: int = 64, sh_degree: int = 4, input_shape: int =256):
         super().__init__()
         self.kernel_size = kernel_size
         self.channels_f = channels_f
@@ -54,7 +53,7 @@ class LightNet(nn.Module):
                                      nn.ReLU(),
                                      nn.AvgPool2d(kernel_size=2) # 128x64x64
                                     )
-        self.encoder_dense = nn.Linear(enc_end_shape, self.latent_dim)
+        self.encoder_dense = nn.Linear(enc_end_shape, 2**self.latent_dim)
 
         self.decoder_conv = nn.Sequential(
                                      nn.ConvTranspose2d(self.channels_f, self.channels_f,  self.kernel_size, stride=2, padding=1, output_padding=1),
@@ -162,9 +161,9 @@ class LightNet(nn.Module):
             if verbose:
                 print(f"Epoch: {epoch}, train loss: {losses_tr_all[epoch]}, test_loss: {losses_test_all[epoch]}")
             elif progress_bar:
-                if epoch % 5 == 0:
+                if epoch % 1 == 0:
                     progress_bar.set_postfix({"Loss test": f"{losses_test_all[epoch]:.{4}f}"})
-                    progress_bar.update(5)
+                    progress_bar.update(1)
                 if epoch == num_epochs -1:
                     progress_bar.close()
 

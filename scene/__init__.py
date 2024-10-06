@@ -19,7 +19,7 @@ from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import torch
 from utils.system_utils import mkdir_p
-from scene.NVDIFFREC import save_env_map, load_env
+# from scene.NVDIFFREC import save_env_map, load_env
 from scene.light_model import LightNet
 
 class Scene:

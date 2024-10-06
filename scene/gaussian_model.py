@@ -21,7 +21,6 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view
 import open3d as o3d
-from scene.NVDIFFREC import create_trainable_env_rnd, load_env
 # TODO: here I think that I don´t need the lightnet, because is per image not per Gaussian
 
 class GaussianModel:
@@ -123,8 +122,11 @@ class GaussianModel:
     
 
     @property
-    def get_albedo(self):
-        return self.albedo_activation(self._albedo)
+    def get_albedo(self, activation = False):
+        if activation:
+            return self.albedo_activation(self._albedo)
+        else:
+            return self._albedo
 
     @property
     def get_metalness(self):
@@ -177,7 +179,7 @@ class GaussianModel:
         self._normal = nn.Parameter(torch.from_numpy(normals).to(self._xyz.device).requires_grad_(True))
         specular_len = 3 
         self._specular = nn.Parameter(torch.zeros((fused_point_cloud.shape[0], specular_len), device="cuda").requires_grad_(True))
-        self._metalness = nn.Parameter(torch.zeros((fused_point_cloud.shape[0]), device="cuda").requires_grad_(True))
+        self._metalness = nn.Parameter(torch.zeros((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
         self._roughness = nn.Parameter(self.default_roughness*torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
         self._normal2 = nn.Parameter(torch.from_numpy(normals2).to(self._xyz.device).requires_grad_(True))
 
@@ -202,7 +204,7 @@ class GaussianModel:
             {'params': [self._specular], 'lr': training_args.specular_lr, "name": "specular"},
             {'params': [self._metalness], 'lr': training_args.metalness_lr, "name": "metalness"},
             {'params': [self._normal], 'lr': training_args.normal_lr, "name": "normal"},
-            {'params': [envlight], 'lr': training_args.envlight_lr, 'weight_decay': training_args.envlight_wd, "name": 'envlight'}
+            {'params': envlight.parameters(), 'lr': training_args.envlight_lr, 'weight_decay': training_args.envlight_wd, "name": 'envlight'}
         ]
         self._normal2.requires_grad_(requires_grad=False)
         l.extend([
@@ -438,7 +440,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "env_light":
+            if group["name"] == "envlight":
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
