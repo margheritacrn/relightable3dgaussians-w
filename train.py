@@ -28,6 +28,7 @@ from scene.light_model import LightNet
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
 #TODO: find a better name to wild_envlight
+#TODO: add regularization term for environment light SH coefficients: they must be positive
 
 
 try:
@@ -43,13 +44,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     wild_envlight = LightNet()
 
     # pretrain envlight AE
-    progress_bar_light_ae = tqdm(range(1, opt.envlight_ae_epochs + 1), desc = "Env light ae pretraining progress")
-    data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_ae_epochs,
-                                                   tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
+    progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Env light ae pretraining progress")
+    data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_pretrain_epochs,
+                                                  tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
-    # freeze layers of wild_envlight model corresponding to the AE
+    # freeze encoder and decoder of envlight model
     for param_name, param in wild_envlight.named_parameters():
         if ('encoder' or 'decoder' in param_name):
+        #if ('decoder' in param_name):
             param.requires_grad = False
 
     scene = Scene(dataset, gaussians, wild_envlight)
@@ -98,7 +100,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
         gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
         # get SH coefficients of environment light for current gt image
-        envlight_sh = envlight(data_transforms_envlight(gt_image))
+        envlight_sh = wild_envlight(data_transforms_envlight(gt_image).unsqueeze(0))
 
         # Render
         render_pkg = render(viewpoint_cam, gaussians, envlight_sh, pipe, background, debug=False)
@@ -222,10 +224,11 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                                 image_k = torch.clamp(render_pkg[k], 0.0, 1.0)
                             tb_writer.add_images(config['name'] + "_view_{}/{}".format(viewpoint.image_name, k), image_k[None], global_step=iteration)
                         
-                        if renderArgs[0].brdf:
+                        """if renderArgs[0].brdf:
                             lighting = render_lighting(scene.gaussians, resolution=(512, 1024))
                             if tb_writer:
                                 tb_writer.add_images(config['name'] + "/lighting", lighting[None], global_step=iteration)
+                        """
                 l1_test = l1_loss(images, gts)
                 psnr_test = psnr(images, gts).mean()  
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
@@ -236,7 +239,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_histogram("scene/roughness_histogram", scene.gaussians.get_roughness, iteration)
-            tb_writer.add_histogram("scene/specularity_histogram", scene.gaussians.get_specularity, iteration)
+            tb_writer.add_histogram("scene/specularity_histogram", scene.gaussians.get_specular, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
