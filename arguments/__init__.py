@@ -59,7 +59,6 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
-        g.brdf = g.brdf_dim>=0
         return g
 
 class PipelineParams(ParamGroup):
@@ -71,10 +70,6 @@ class PipelineParams(ParamGroup):
 
     def extract(self, args):
         g = super().extract(args)
-        g.brdf = args.brdf_dim>=0
-        if g.brdf:
-            g.convert_SHs_python = True
-        g.brdf_mode = args.brdf_mode
         return g
 
 class OptimizationParams(ParamGroup):
@@ -106,7 +101,7 @@ class OptimizationParams(ParamGroup):
         self.metalness_lr = 0.0002
         self.albedo_lr = 0.0002
         self.envlight_lr = 0.001
-        self.envlight_wd = 1e-5
+        self.envlight_wd = 0
         self.envlight_pretrain_epochs = 50
         self.normal_reg_from_iter = 0
         self.normal_reg_util_iter = 30_000
