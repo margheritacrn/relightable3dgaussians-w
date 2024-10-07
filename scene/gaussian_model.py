@@ -57,7 +57,6 @@ class GaussianModel:
         self.specular_activation = torch.sigmoid
         self.metalness_activation = torch.sigmoid
         self.albedo_activation = torch.sigmoid
-        self.default_roughness = 0.0
         self.roughness_activation = torch.sigmoid
         self.roughness_bias = 0.
         self.default_roughness = 0.6
@@ -122,11 +121,8 @@ class GaussianModel:
     
 
     @property
-    def get_albedo(self, activation = False):
-        if activation:
-            return self.albedo_activation(self._albedo)
-        else:
-            return self._albedo
+    def get_albedo(self):
+        return self.albedo_activation(self._albedo)
 
     @property
     def get_metalness(self):
@@ -168,8 +164,8 @@ class GaussianModel:
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
-
-        self._albedo = nn.Parameter(features[:,:3].contiguous().requires_grad_(True))
+        #TODO: check here
+        # self._albedo = nn.Parameter(features[:,:3].contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,3:].contiguous().requires_grad_(True))
 
 
@@ -178,8 +174,9 @@ class GaussianModel:
 
         self._normal = nn.Parameter(torch.from_numpy(normals).to(self._xyz.device).requires_grad_(True))
         specular_len = 3 
-        self._specular = nn.Parameter(torch.zeros((fused_point_cloud.shape[0], specular_len), device="cuda").requires_grad_(True))
-        self._metalness = nn.Parameter(torch.zeros((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
+        self._albedo = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 3), device="cuda").requires_grad_(True))
+        self._specular = nn.Parameter(torch.ones((fused_point_cloud.shape[0], specular_len), device="cuda").requires_grad_(True))
+        self._metalness = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
         self._roughness = nn.Parameter(self.default_roughness*torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
         self._normal2 = nn.Parameter(torch.from_numpy(normals2).to(self._xyz.device).requires_grad_(True))
 

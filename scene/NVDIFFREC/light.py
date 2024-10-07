@@ -71,8 +71,9 @@ class EnvironmentLight(torch.nn.Module):
         # get diffuse irradiance
         M = M.unsqueeze(0) # 1 x 3 x 4 x 4
         M = M.repeat(normal_h.shape[0], 1, 1, 1) # N x 3 x 4 x 4
-        Mn = torch.matmul(M, normal_h.unsqueeze(1).unsqueeze(-1)) # N x 3 x 4 x 4 * N x 1 x 4 x 1 = N x 3 x 4 x 1
-        diffuse_irradiance = (Mn.squeeze(-1)*normal_h.unsqueeze(1)).sum(dim=-1) 
+        Mn = torch.matmul(M, normal_h.unsqueeze(1).repeat(1,3,1).unsqueeze(-1)) # N x 3 x 4 x 4 * N x 3 x 4 x 1 = N x 3 x 4 x 1
+        diffuse_irradiance = (Mn.squeeze(-1)*normal_h.unsqueeze(1)).sum(dim=-1)
+        diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance) 
         return diffuse_irradiance
 
 
@@ -97,7 +98,7 @@ class EnvironmentLight(torch.nn.Module):
 
 
 
-    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=True):
+    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=False, tone=False):
         """
        The function returns emitted radiance in outgoing direction view_pos. If specular is 
        True a microfacet reflectanc model is assumed, otherwise a Lambertian model. 
@@ -112,37 +113,36 @@ class EnvironmentLight(torch.nn.Module):
             envlight: SH coefficients of environment light
         """
         assert self.base_is_SH, "envlight can be only represented through Spherical Harmonics"
+
         # (H, W, N, C)
         wo = util.safe_normalize(view_pos - gb_pos)
 
+        diff_col = albedo
         if specular:
             metalness = km
-            diff_col = albedo*(1-metalness)
             roughness = kr # (H,W,N,1)
             specularity  = ks
-        else:
-            diff_col = albedo # (H,W,N,3)
 
         reflvec = util.safe_normalize(util.reflect(wo, gb_normal))
         nrmvec = gb_normal
-        if self.mtx is not None: # Rotate lookup
+        """if self.mtx is not None: # Rotate lookup
             mtx = torch.as_tensor(self.mtx, dtype=torch.float32, device='cuda')
             reflvec = ru.xfm_vectors(reflvec.view(reflvec.shape[0], reflvec.shape[1] * reflvec.shape[2], reflvec.shape[3]), mtx).view(*reflvec.shape)
             nrmvec  = ru.xfm_vectors(nrmvec.view(nrmvec.shape[0], nrmvec.shape[1] * nrmvec.shape[2], nrmvec.shape[3]), mtx).view(*nrmvec.shape)
-        diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze()) # convolve self.base (SH coeffs for envlight) with SH coefficients of cosine term, then element wise multiplication with diff_col (=albedo, in [0,1]**3 for each point)
+        """
+        diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
         diffuse_linear = torch.sigmoid(diff_col*diffuse_irradiance)
-        # alternative: use matrix representation from an efficient representaiton for irradiance environment maps.  In any case build a function
-        shaded_col = diffuse_linear # diffuse radiance #*(1-specularity), /pi ?
-        extras = {"diffuse": diffuse_linear}
+        # shaded_col = diffuse_linear
+        shaded_col = diff_col*diffuse_irradiance # diffuse radiance #*(1-specularity), /pi ?
+        extras = {"diffuse": diff_col*diffuse_irradiance}
 
         if specular:
             # Lookup FG term from lookup texture
-            NdotV = torch.clamp(util.dot(wo, gb_normal), min=1e-4)
+            NdotV = torch.clamp(util.dot(wo, nrmvec), min=1e-4)
             fg_uv = torch.cat((NdotV, roughness), dim=-1)
             if not hasattr(self, '_FG_LUT'):
                 self._FG_LUT = torch.as_tensor(np.fromfile('scene/NVDIFFREC/irrmaps/bsdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2), dtype=torch.float32, device='cuda')
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
-
             roughness = roughness.squeeze(0).squeeze(0) # (N,1)
             # convovlve self.base with SH coeffs of Gaussian blur kernel of std roughness 
             spec_irradiance = self.get_specular_irradiance(roughness) # (N, 25, 3)
@@ -150,14 +150,26 @@ class EnvironmentLight(torch.nn.Module):
             spec_irradiance = spec_irradiance.transpose(1,2)
             # compute specular radiance
             spec_radiance = eval_sh(self.sh_degree, spec_irradiance, reflvec.squeeze())
+            # spec_radiance = torch.nn.ReLU(spec_radiance)
             # adjust dimensions
             spec_radiance = spec_radiance[None, None, ...] # (H, W, N, 3)
             # Compute aggregate lighting
-            reflectance = specularity * fg_lookup[...,0:1] + fg_lookup[...,1:2]
-            # shaded_col += spec_irradiance*reflectance
+            if metalness is None:
+                F0 = torch.ones_like(albedo) * 0.04  # [1, H, W, 3]
+            else:
+                F0 = (1.0 - metalness) * 0.04 + albedo * metalness
+            reflectance = F0* fg_lookup[...,0:1] + fg_lookup[...,1:2]
+            specular_color = spec_radiance*reflectance
+            shaded_col += specular_color
             extras['specular'] = spec_radiance*reflectance
+        else: #TODO: remove this else statement
+            extras['specular'] = shaded_col
 
-        rgb = shaded_col
+        if tone:
+            # apply tone mapping
+            rgb = util.aces_film(shaded_col)
+        else:
+            rgb = shaded_col.clamp(min=0.0, max=1.0)
 
         return rgb, extras
 

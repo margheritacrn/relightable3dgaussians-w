@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 import imageio
+from typing import Union
 
 #----------------------------------------------------------------------------
 # Vector operations
@@ -481,3 +482,16 @@ def checkerboard(res, checker_size) -> np.ndarray:
     check = check[:res[0], :res[1]]
     return np.stack((check, check, check), axis=-1)
 
+#-----------------------------------------------------------------------------
+def aces_film(rgb: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.Tensor]:
+    EPS = 1e-6
+    a = 2.51
+    b = 0.03
+    c = 2.43
+    d = 0.59
+    e = 0.14
+    rgb = (rgb * (a * rgb + b)) / (rgb * (c * rgb + d) + e)
+    if isinstance(rgb, np.ndarray):
+        return rgb.clip(min=0.0, max=1.0)
+    elif isinstance(rgb, torch.Tensor):
+        return rgb.clamp(min=0.0, max=1.0)

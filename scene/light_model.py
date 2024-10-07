@@ -84,10 +84,10 @@ class LightNet(nn.Module):
         self.sh_base = nn.Linear(self.dense_layer_size, 3)
         self.sh_rest = nn.Linear(self.dense_layer_size, (self.sh_dim - 1) * 3)
         # zero initialization for rest sh linear layers
-        self.sh_rest.weight.data.zero_()
-        self.sh_rest.bias.data.zero_()
+        #self.sh_rest.weight.data.zero_()
+        #self.sh_rest.bias.data.zero_()
 
-        for linear_layer in [self.encoder_dense, self.decoder_dense, self.mlp, self.sh_base]:
+        for linear_layer in [self.encoder_dense, self.decoder_dense, self.mlp, self.sh_base, self.sh_rest]:
              linear_layer.apply(init_weights)
 
 
@@ -100,8 +100,9 @@ class LightNet(nn.Module):
             decoded = self.decoder_conv(decoded)
             return decoded
          else:
-            sh_base = self.sh_base(self.mlp(feature_vec))
-            sh_rest = self.sh_rest(self.mlp(feature_vec))
+            x = self.mlp(feature_vec)
+            sh_base = self.sh_base(x)
+            sh_rest = self.sh_rest(x)
             sh_coeffs = torch.cat([sh_base, sh_rest], dim=-1).view(-1, self.sh_dim, 3)
             return sh_coeffs
 
