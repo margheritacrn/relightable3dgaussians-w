@@ -82,8 +82,8 @@ class LightNet(nn.Module):
         )
 
         self.sh_base = nn.Linear(self.dense_layer_size, 3)
-        self.sh_rest = nn.Linear(self.dense_layer_size, (self.sh_dim - 1) * 3)
-        self.sh_all = nn.Linear(self.dense_layer_size, self.sh_dim*3)
+        self.sh_rest = nn.Linear(self.dense_layer_size, self.sh_dim - 1)
+        self.sh_all = nn.Linear(self.dense_layer_size, self.sh_dim)
         # zero initialization for rest sh linear layers
         self.sh_rest.weight.data.zero_()
         self.sh_rest.bias.data.zero_()
@@ -103,11 +103,11 @@ class LightNet(nn.Module):
          else:
             x = self.mlp(feature_vec)
             if sh_all:
-                sh_coeffs = self.sh_all(x).view(-1, self.sh_dim, 3)
+                sh_coeffs = self.sh_all(x).unsqueeze(-1)
             else:
                 sh_base = self.sh_base(x)
                 sh_rest = self.sh_rest(x)
-                sh_coeffs = torch.cat([sh_base, sh_rest], dim=-1).view(-1, self.sh_dim, 3)
+                sh_coeffs = torch.cat([sh_base, sh_rest], dim=-1).unsqueeze(-1)
             return sh_coeffs
 
 
