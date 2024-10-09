@@ -14,7 +14,11 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 from utils.image_utils import erode
+from utils.sh_utils import eval_sh
 import numpy as np
+from utils.general_utils import rand_hemisphere_dir
+from scene.NVDIFFREC.light import EnvironmentLight
+import random
 
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
@@ -117,6 +121,37 @@ def delta_normal_loss(delta_normal_norm, alpha=None):
     loss = (w * l).mean()
 
     return loss
+
+
+def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N: int = 1000):
+    """
+    L2 regularization on environment lighting coefficients: they should belong to R+.
+    If the number of normals vectors is greater than subset_size=100, extraxct a random subset.
+    Args:
+        envlight: environment lighting
+        normals: normal vectors of shape B x 3
+        N: number of directions samples
+    """
+    assert len(normals.shape) == 2 and normals.shape[-1] == 3 , "error: n must have size  L X 3"
+
+    normals_subset_size = 100
+    if normals.shape[0] > normals_subset_size:
+        normals_rand_subset = random.sample(range(0, normals_subset_size), normals_subset_size)
+        normals = normals[normals_rand_subset]
+    # generate N random samples directions in the hemisphere centered in n for each n in normals
+    rand_hemisphere_dirs = rand_hemisphere_dir(N, normals) # (..., N, 3)
+    # evaluate SH coefficients of env light
+    light = eval_sh(envlight.sh_degree, envlight.base.transpose(0,1), rand_hemisphere_dirs)
+    # take  minimum between lighting coefficients and 0, equivalent to applying ReLU()
+    torch.nn.functional.relu(light)
+    # average light values over number of samples
+    avg_light_per_normal = torch.mean(light, dim = 1)
+    # average light values over normals
+    avg_light = torch.mean(avg_light_per_normal, dim = 0)
+    # take squared 2 norm
+    l2_norm = ((avg_light - torch.zeros_like(avg_light))**2).mean()
+    return l2_norm
+
 
 def cam_depth2world_point(cam_z, pixel_idx, intrinsic, extrinsic):
     '''
