@@ -18,13 +18,12 @@ from utils.sh_utils import gauss_weierstrass_kernel, eval_sh
 #NOTE: I also need to load envlights that don't need training, so I should have base attribute not directly initialized to LightNet object
 #TODO: add dimensionality control to load_env function
 #TODO: check consistency of SH coefficients dimension of envlight, should be 3xnum_sh_coeffs. Also, add error handling for SH coeffs > 25 (i.e deg > 4)
-#TODO: decide what to do with specularity: in case is not used it must be removed from shade's parameters
-#TODO: fix squeezing of self.ba
+
 
 class EnvironmentLight(torch.nn.Module):
 
     def __init__(self, base: torch.Tensor, base_is_SH: bool, sh_degree : int = 4):
-        self.base = base.squeeze(0) # (sh_degree + 1)**2 x 1
+        self.base = base.squeeze()
         self.base_is_SH = base_is_SH
         self.sh_degree = sh_degree
         self.sh_dim = (sh_degree +1)**2
@@ -35,6 +34,7 @@ class EnvironmentLight(torch.nn.Module):
             # update attribute
             self.base_is_SH = True
         # define constant attributes for diffuse irradiance computationn
+        self.NUM_CHANNELS = 3
         self.C1 = 0.429043
         self.C2 = 0.511664
         self.C3 = 0.743125
@@ -54,22 +54,26 @@ class EnvironmentLight(torch.nn.Module):
         The implementation refers to section 3.2 of "An efficient representaiton for Irradiacne Environment Maps
         by Ramamoorthi and Pat Hanrahan."""
         # move normal to homogeneous coordinates:
-        normal_h = get_homogeneous(normal) # (N, 4)
+        normal_h = get_homogeneous(normal) # N x 4
         # build symmetric matrix M
-        M = torch.zeros((4,4)).cuda()
-        triu_entries = torch.zeros(10).cuda()
-        envc_sh = self.base.squeeze()
-        triu_entries = torch.Tensor([self.C1 *envc_sh[8], self.C1 *envc_sh[4], self.C1 *envc_sh[7], self.C2*envc_sh[3],
-                                        -self.C1*envc_sh[8], self.C1*envc_sh[5], self.C2*envc_sh[1],
-                                        self.C3*envc_sh[6], self.C2*envc_sh[2], self.C4*envc_sh[0]-self.C5*envc_sh[6]]).cuda()
-        M[self.M_i, self.M_j] = triu_entries
-        M.T[self.M_i, self.M_j] = triu_entries
+        M = torch.zeros((self.NUM_CHANNELS,4,4)).cuda()
+        triu_entries = torch.zeros(self.NUM_CHANNELS, 10).cuda()
+        for c in range(0, self.NUM_CHANNELS):
+            envc_sh = self.base[:, c]
+            triu_entries[c] = torch.Tensor([self.C1 *envc_sh[8], self.C1 *envc_sh[4], self.C1 *envc_sh[7], self.C2*envc_sh[3],
+                                            -self.C1*envc_sh[8], self.C1*envc_sh[5], self.C2*envc_sh[1],
+                                            self.C3*envc_sh[6], self.C2*envc_sh[2], self.C4*envc_sh[0]-self.C5*envc_sh[6]])
+            M[c][self.M_i, self.M_j] = triu_entries[c]
+            M[c].T[self.M_i, self.M_j] = triu_entries[c]
+        # triu_entries[:, :3] = self.C1 * triu_entries[:,:3]
+        # triu_entries[:,[3,6,8]] = self.C2*triu_entries[:,[3,6,8]] m IS 3X4X4 while normal_sh is Nx4
 
         # get diffuse irradiance
-        M = M.unsqueeze(0) # (1, 4, 4)
-        M = M.repeat(normal_h.shape[0], 1, 1) # (N, 4, 4)
-        Mn = torch.matmul(M, normal_h.unsqueeze(-1)) # (N, 4, 4)* (N, 4, 1) = (N, 4, 1)
-        diffuse_irradiance = (Mn*normal_h.unsqueeze(-1)).sum(dim=1) # (N, 1) 
+        M = M.unsqueeze(0) # 1 x 3 x 4 x 4
+        M = M.repeat(normal_h.shape[0], 1, 1, 1) # N x 3 x 4 x 4
+        Mn = torch.matmul(M, normal_h.unsqueeze(1).repeat(1,3,1).unsqueeze(-1)) # N x 3 x 4 x 4 * N x 3 x 4 x 1 = N x 3 x 4 x 1
+        diffuse_irradiance = (Mn.squeeze(-1)*normal_h.unsqueeze(1)).sum(dim=-1)
+        diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance) 
         return diffuse_irradiance
 
 
@@ -80,19 +84,21 @@ class EnvironmentLight(torch.nn.Module):
         standard deviation = roughness. Roughness is assumed to be of dim (N,1).
         """
         # build coefficients of blur kernel in frequency (SH) domain
-        gwk_sh = gauss_weierstrass_kernel(roughness, self.sh_degree) # (N, 25)
-        gwk_sh = gwk_sh.unsqueeze(-1) # (N, 25, 1)
+        gwk_sh = gauss_weierstrass_kernel(roughness, self.sh_degree) # N x 25
+        gwk_sh = gwk_sh.unsqueeze(-1) # N x 25 x 1
         # adjust dimensions
-        envlight_sh = self.base.unsqueeze(0)   # (1, 25, 1)
-        envlight_sh = envlight_sh.repeat(gwk_sh.shape[0], 1, 1) # (N, 25, 1)
+        envlight_sh = self.base.unsqueeze(0)   # 1 x 25 x 3
+        envlight_sh = envlight_sh.repeat(gwk_sh.shape[0], 1, 1) # N x 25 x 3
         # perform convolution
-        spec_irradiance = gwk_sh * envlight_sh # (N, 25, 1)
+        # spec_irradiance = torch.bmm(gwk_sh, envlight_sh)  # N x 1 x 3
+        spec_irradiance = gwk_sh * envlight_sh # N x 25 x 3
+        # spec_irradiance = spec_irradiance.squeeze(1) # N x 3
 
         return spec_irradiance
 
 
 
-    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=True, tone=False):
+    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=False, tone=False):
         """
        The function returns emitted radiance in outgoing direction view_pos. If specular is 
        True a microfacet reflectanc model is assumed, otherwise a Lambertian model. 
@@ -115,12 +121,19 @@ class EnvironmentLight(torch.nn.Module):
         if specular:
             metalness = km
             roughness = kr # (H,W,N,1)
+            specularity  = ks
 
         reflvec = util.safe_normalize(util.reflect(wo, gb_normal))
         nrmvec = gb_normal
+        """if self.mtx is not None: # Rotate lookup
+            mtx = torch.as_tensor(self.mtx, dtype=torch.float32, device='cuda')
+            reflvec = ru.xfm_vectors(reflvec.view(reflvec.shape[0], reflvec.shape[1] * reflvec.shape[2], reflvec.shape[3]), mtx).view(*reflvec.shape)
+            nrmvec  = ru.xfm_vectors(nrmvec.view(nrmvec.shape[0], nrmvec.shape[1] * nrmvec.shape[2], nrmvec.shape[3]), mtx).view(*nrmvec.shape)
+        """
         diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
-        # get diffuse radiance
-        shaded_col = diff_col*diffuse_irradiance 
+        diffuse_linear = torch.sigmoid(diff_col*diffuse_irradiance)
+        # shaded_col = diffuse_linear
+        shaded_col = diff_col*diffuse_irradiance # diffuse radiance #*(1-specularity), /pi ?
         extras = {"diffuse": diff_col*diffuse_irradiance}
 
         if specular:
@@ -132,20 +145,20 @@ class EnvironmentLight(torch.nn.Module):
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
             roughness = roughness.squeeze(0).squeeze(0) # (N,1)
             # convovlve self.base with SH coeffs of Gaussian blur kernel of std roughness 
-            spec_irradiance = self.get_specular_irradiance(roughness) # (N, 25, 1)
+            spec_irradiance = self.get_specular_irradiance(roughness) # (N, 25, 3)
             # transpose for eval_sh
-            spec_irradiance = spec_irradiance.transpose(1,2) # (N, 1, 25)
+            spec_irradiance = spec_irradiance.transpose(1,2)
             # compute specular radiance
-            spec_radiance = eval_sh(self.sh_degree, spec_irradiance, reflvec.squeeze()) # (N, 3)
+            spec_radiance = eval_sh(self.sh_degree, spec_irradiance, reflvec.squeeze())
+            # spec_radiance = torch.nn.ReLU(spec_radiance)
             # adjust dimensions
             spec_radiance = spec_radiance[None, None, ...] # (H, W, N, 3)
             # Compute aggregate lighting
             if metalness is None:
-                F0 = torch.ones_like(albedo) * 0.04  # (1, H, W, 3)
+                F0 = torch.ones_like(albedo) * 0.04  # [1, H, W, 3]
             else:
                 F0 = (1.0 - metalness) * 0.04 + albedo * metalness
             reflectance = F0* fg_lookup[...,0:1] + fg_lookup[...,1:2]
-            print(reflectance.shape)
             specular_color = spec_radiance*reflectance
             shaded_col += specular_color
             extras['specular'] = spec_radiance*reflectance
@@ -156,7 +169,7 @@ class EnvironmentLight(torch.nn.Module):
             # apply tone mapping
             rgb = util.aces_film(shaded_col)
         else:
-            rgb = torch.sigmoid(shaded_col)
+            rgb = shaded_col.clamp(min=0.0, max=1.0)
 
         return rgb, extras
 
