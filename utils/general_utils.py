@@ -171,7 +171,7 @@ def rand_hemisphere_dir(N: torch.Tensor, n: torch.Tensor):
         N: number of samples,
         n: normal vector of shape L x 3
     Returns:
-        d (torch.Tensor): sampled cosine weighted direction.
+        d (torch.Tensor): sampled cosine weighted direction of shape L x N x 3.
     """
     assert len(n.shape) == 2 and n.shape[-1] == 3 , "error: n must have size  L X 3"
 
@@ -186,6 +186,6 @@ def rand_hemisphere_dir(N: torch.Tensor, n: torch.Tensor):
     # orient points around corresponding normal vectorſ
     tangent = torch.nn.functional.normalize(rand, dim=-1)
     bitangent = torch.linalg.cross(tangent, normals) # cross product along dim=-1
-    d = tangent*d[...,0].unsqueeze(-1) + bitangent*d[...,1].unsqueeze(-1) + normals*d[...,2].unsqueeze(-1)
+    d = tangent*d[...,0].unsqueeze(-1) + bitangent*d[...,1].unsqueeze(-1) + normals*d[...,2].unsqueeze(-1) 
 
     return d
