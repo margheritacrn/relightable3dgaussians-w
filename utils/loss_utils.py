@@ -17,6 +17,7 @@ from utils.image_utils import erode
 from utils.sh_utils import eval_sh
 import numpy as np
 from utils.general_utils import rand_hemisphere_dir
+from scene.NVDIFFREC import util
 from scene.NVDIFFREC.light import EnvironmentLight
 import random
 
@@ -125,7 +126,7 @@ def delta_normal_loss(delta_normal_norm, alpha=None):
 
 def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N: int = 1000):
     """
-    L2 regularization on environment lighting coefficients: they should belong to R+.
+    L2 regularization on environment lighting coefficients: irradiance should belong to R+.
     If the number of normals vectors is greater than subset_size=100, extraxct a random subset.
     Args:
         envlight: environment lighting
@@ -142,7 +143,7 @@ def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N: int = 10
     rand_hemisphere_dirs = rand_hemisphere_dir(N, normals) # (..., N, 3)
     # evaluate SH coefficients of env light
     light = eval_sh(envlight.sh_degree, envlight.base.transpose(0,1), rand_hemisphere_dirs)
-    # take  minimum between lighting coefficients and 0, equivalent to applying ReLU()
+    # take  minimum between lighting values and 0, equivalent to applying ReLU()
     torch.nn.functional.relu(light)
     # average light values over number of samples
     avg_light_per_normal = torch.mean(light, dim = 1)
@@ -151,6 +152,60 @@ def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N: int = 10
     # take squared 2 norm
     l2_norm = ((avg_light - torch.zeros_like(avg_light))**2).mean()
     return l2_norm
+
+
+def envlight_loss2(envlight: EnvironmentLight, normals: torch.Tensor, roughness: torch.Tensor, N: int = 1000, specular=True):
+    """
+    L2 regularization on environment lighting coefficients: both diffuse and specular irradiance should belong to R+.
+    If the number of normals vectors is greater than subset_size=100, extraxct a random subset.
+    Restrict roughness values accordingly.
+    Args:
+        envlight: environment lighting
+        normals: normal vectors of shape L x 3
+        roughness: surface roughness values of shape L x 3
+        N: number of directions samples
+    """
+    assert len(normals.shape) == 2 and normals.shape[-1] == 3 , "error: normals must have size  L X 3"
+    assert len(roughness.shape) == 2 and roughness.shape[-1] == 1 , "error: roughness must have size  L X 1"
+    assert normals.shape[0] == roughness.shape[0] , "normals and roughness must have same batch size"
+
+    normals_subset_size = 1000
+    if normals.shape[0] > normals_subset_size:
+        rand_subset = random.sample(range(0, normals_subset_size), normals_subset_size)
+        normals = normals[rand_subset]
+        roughness = roughness[rand_subset]
+
+    # get diffuse irradiance for the given normal vectors
+    diffuse_irrad = envlight.get_diffuse_irradiance(normals)
+    # take  minimum between  diff irradiance and 0, equivalent to applying ReLU()
+    torch.nn.functional.relu(diffuse_irrad)
+    # average diff light over normals
+    avg_diff_per_normal = torch.mean(diffuse_irrad, dim = 0)
+    # take squared 2 norm
+    l2_norm_diff = ((avg_diff_per_normal- torch.zeros_like(avg_diff_per_normal))**2).mean()
+    if specular:
+        # generate N random samples directions in the hemisphere centered in n for each n in normals
+        rand_hemisphere_dirs = rand_hemisphere_dir(N, normals) # (L, N, 3)
+        # get corresponding reflection directions
+        reflection_dirs =  util.safe_normalize(util.reflect(rand_hemisphere_dirs.unsqueeze(-1),  normals.repeat(rand_hemisphere_dirs.shape[1], 1 , 1).transpose(0,1).unsqueeze(-1)))
+        # get specular irradiance
+        specular_light_sh = envlight.get_specular_irradiance(roughness).transpose(1,2) # (100, 3, 25)
+        # adjust dims
+        specular_light_sh = specular_light_sh.repeat(rand_hemisphere_dirs.shape[1], 1 , 1, 1).transpose(0,1)
+        # evaluate SH coefficients for both diffuse and specular radiance
+        specular_irrad = eval_sh(envlight.sh_degree, specular_light_sh, reflection_dirs.squeeze())
+        # take  minimum between spec irradiance and 0, equivalent to applying ReLU()
+        torch.nn.functional.relu(specular_irrad)
+        # average spec light values over number of samples
+        avg_spec_per_normal = torch.mean(specular_irrad, dim = 1)
+        # average spec light values over normals
+        avg_spec = torch.mean(avg_spec_per_normal, dim = 0)
+        # take squared 2 norm
+        l2_norm_spec = ((avg_spec - torch.zeros_like(avg_spec))**2).mean()
+        return l2_norm_diff + l2_norm_spec
+    else:
+        return l2_norm_diff
+
 
 
 def cam_depth2world_point(cam_z, pixel_idx, intrinsic, extrinsic):
