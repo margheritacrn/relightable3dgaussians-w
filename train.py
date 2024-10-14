@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_loss2
 from gaussian_renderer import render, network_gui, render_lighting
 import sys
 from scene import Scene, GaussianModel
@@ -24,6 +24,7 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import time
+from scene.NVDIFFREC import load_sh_env
 from scene.light_model import LightNet
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
@@ -48,10 +49,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_pretrain_epochs,
                                                   tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
+    
+    #TODO: remove
+    wild_envlight.load_state_dict(torch.load(dataset.model_path + '/lightNetAE_weights_epoch_99.pth', weights_only=True))
+    # wild_envlight.load_state_dict(torch.load('output/schloss/lightNetAE_weights_epoch_29.pth', weights_only=True))
+
     # freeze encoder and decoder of envlight model
     for param_name, param in wild_envlight.named_parameters():
-        if ('encoder' or 'decoder' in param_name):
-        #if ('decoder' in param_name):
+        # if ('encoder' or 'decoder' in param_name):
+        if ('decoder' in param_name):
             param.requires_grad = False
 
     scene = Scene(dataset, gaussians, wild_envlight)
@@ -99,11 +105,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
 
         gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
         gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
-        # get SH coefficients of environment light for current gt image
+        # get SH coefficients of environment lighting for current gt image
         envlight_sh = wild_envlight(data_transforms_envlight(gt_image).unsqueeze(0))
+        # create environment lighting object
+        envlight = load_sh_env(envlight_sh)
 
         # Render
-        render_pkg = render(viewpoint_cam, gaussians, envlight_sh, pipe, background, debug=False)
+        render_pkg = render(viewpoint_cam, gaussians, envlight, pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         losses_extra = {}
         if iteration > opt.normal_reg_from_iter:
@@ -119,6 +127,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         for k in losses_extra.keys():
             loss += getattr(opt, f'lambda_{k}')* losses_extra[k]
+        # wildenvlight loss
+        dir_pp = (gaussians.get_xyz - viewpoint_cam.camera_center.repeat(gaussians.get_opacity.shape[0], 1))
+        dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+        # create a copy of the normals without gradient tracking for envlight loss
+        normals = gaussians.get_normal(dir_pp_normalized=dir_pp_normalized).data.clone()
+        roughness = gaussians.get_roughness
+        roughness = roughness.data.clone()
+        # envl_loss = envlight_loss(envlight, normals)
+        envl_loss = envlight_loss2(envlight, normals, roughness)
+        loss += opt.lambda_envlight*envl_loss
         loss.backward()
 
         iter_end.record()
@@ -137,7 +155,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
 
             # Log and save
             losses_extra['psnr'] = psnr(image, gt_image).mean()
-            training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (envlight_sh, pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (envlight, pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -239,7 +257,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
             tb_writer.add_histogram("scene/roughness_histogram", scene.gaussians.get_roughness, iteration)
-            tb_writer.add_histogram("scene/specularity_histogram", scene.gaussians.get_specular, iteration)
+            tb_writer.add_histogram("scene/metalness_histogram", scene.gaussians.get_metalness, iteration)
             tb_writer.add_scalar('total_points', scene.gaussians.get_xyz.shape[0], iteration)
         torch.cuda.empty_cache()
 
