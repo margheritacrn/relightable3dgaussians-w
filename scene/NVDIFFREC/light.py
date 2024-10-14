@@ -65,15 +65,13 @@ class EnvironmentLight(torch.nn.Module):
                                             self.C3*envc_sh[6], self.C2*envc_sh[2], self.C4*envc_sh[0]-self.C5*envc_sh[6]])
             M[c][self.M_i, self.M_j] = triu_entries[c]
             M[c].T[self.M_i, self.M_j] = triu_entries[c]
-        # triu_entries[:, :3] = self.C1 * triu_entries[:,:3]
-        # triu_entries[:,[3,6,8]] = self.C2*triu_entries[:,[3,6,8]] m IS 3X4X4 while normal_sh is Nx4
 
         # get diffuse irradiance
         M = M.unsqueeze(0) # 1 x 3 x 4 x 4
         M = M.repeat(normal_h.shape[0], 1, 1, 1) # N x 3 x 4 x 4
         Mn = torch.matmul(M, normal_h.unsqueeze(1).repeat(1,3,1).unsqueeze(-1)) # N x 3 x 4 x 4 * N x 3 x 4 x 1 = N x 3 x 4 x 1
         diffuse_irradiance = (Mn.squeeze(-1)*normal_h.unsqueeze(1)).sum(dim=-1)
-        diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance) 
+        # diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance) 
         return diffuse_irradiance
 
 
@@ -92,13 +90,12 @@ class EnvironmentLight(torch.nn.Module):
         # perform convolution
         # spec_irradiance = torch.bmm(gwk_sh, envlight_sh)  # N x 1 x 3
         spec_irradiance = gwk_sh * envlight_sh # N x 25 x 3
-        # spec_irradiance = spec_irradiance.squeeze(1) # N x 3
 
         return spec_irradiance
 
 
 
-    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=False, tone=False):
+    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=True, tone=True):
         """
        The function returns emitted radiance in outgoing direction view_pos. If specular is 
        True a microfacet reflectanc model is assumed, otherwise a Lambertian model. 
@@ -122,18 +119,13 @@ class EnvironmentLight(torch.nn.Module):
             metalness = km
             roughness = kr # (H,W,N,1)
             specularity  = ks
+            diff_col = (1-metalness)*diff_col
 
         reflvec = util.safe_normalize(util.reflect(wo, gb_normal))
         nrmvec = gb_normal
-        """if self.mtx is not None: # Rotate lookup
-            mtx = torch.as_tensor(self.mtx, dtype=torch.float32, device='cuda')
-            reflvec = ru.xfm_vectors(reflvec.view(reflvec.shape[0], reflvec.shape[1] * reflvec.shape[2], reflvec.shape[3]), mtx).view(*reflvec.shape)
-            nrmvec  = ru.xfm_vectors(nrmvec.view(nrmvec.shape[0], nrmvec.shape[1] * nrmvec.shape[2], nrmvec.shape[3]), mtx).view(*nrmvec.shape)
-        """
+
         diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
-        diffuse_linear = torch.sigmoid(diff_col*diffuse_irradiance)
-        # shaded_col = diffuse_linear
-        shaded_col = diff_col*diffuse_irradiance # diffuse radiance #*(1-specularity), /pi ?
+        shaded_col = diff_col*diffuse_irradiance # alternative: torch.nn.functional.softplus?
         extras = {"diffuse": diff_col*diffuse_irradiance}
 
         if specular:
@@ -150,7 +142,6 @@ class EnvironmentLight(torch.nn.Module):
             spec_irradiance = spec_irradiance.transpose(1,2)
             # compute specular radiance
             spec_radiance = eval_sh(self.sh_degree, spec_irradiance, reflvec.squeeze())
-            # spec_radiance = torch.nn.ReLU(spec_radiance)
             # adjust dimensions
             spec_radiance = spec_radiance[None, None, ...] # (H, W, N, 3)
             # Compute aggregate lighting
@@ -163,10 +154,10 @@ class EnvironmentLight(torch.nn.Module):
             shaded_col += specular_color
             extras['specular'] = spec_radiance*reflectance
         else: #TODO: remove this else statement
-            extras['specular'] = shaded_col
+            extras['specular'] = extras['diffuse']
 
         if tone:
-            # apply tone mapping
+            # apply tone mapping and clamp in range [0,1]
             rgb = util.aces_film(shaded_col)
         else:
             rgb = shaded_col.clamp(min=0.0, max=1.0)
@@ -189,7 +180,7 @@ def load_hdr_env(fn, scale=1.0):
     return l
 
 
-def get_SH_from_cubemap(cubemap, sh_degree: int = 2):
+def get_SH_from_cubemap(cubemap, sh_degree: int = 4):
     pass
 
 
