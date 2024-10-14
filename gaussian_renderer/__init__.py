@@ -17,7 +17,7 @@ from utils.sh_utils import eval_sh
 from utils.graphics_utils import normal_from_depth_image
 from utils.general_utils import flip_align_view
 # from scene.NVDIFFREC import extract_env_map
-from scene.NVDIFFREC import load_sh_env
+from scene.NVDIFFREC.light import EnvironmentLight
 import numpy as np
 #TODO: edit render lighting and shade function (rewrite)
 #TODO: remove references to brdf
@@ -64,7 +64,7 @@ def normalize_normal_inplace(normal, alpha):
     fg_mask = (alpha[None,...]>0.).repeat(3, 1, 1)
     normal = torch.where(fg_mask, torch.nn.functional.normalize(normal, p=2, dim=0), normal)
 
-def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=False, speed=False):
+def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=False, speed=False):
     """
     Render the scene. 
     
@@ -128,12 +128,11 @@ def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pip
     shs = None
     colors_precomp = None
     if colors_precomp is None:
-        envlight = load_sh_env(envlight_sh)
         delta_normal_norm = None
         gb_pos = pc.get_xyz # (N, 3) 
         view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
 
-        albedo   = pc.get_albedo # (N, 3)
+        albedo = pc.get_albedo # (N, 3)
         normal, delta_normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized, return_delta=True) # (N, 3) 
         delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
         specular  = pc.get_specular # (N, 3) 
@@ -185,8 +184,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight_sh : torch.Tensor, pip
         if delta_normal_norm is not None:
             render_extras.update({"delta_normal_norm": delta_normal_norm.repeat(1, 3)})
         if debug:
-            render_extras.update({
-                "diffuse": diffuse, 
+            render_extras.update({ 
                 "specular": specular, 
                 "roughness": roughness.repeat(1, 3), 
                 "diffuse_color": diffuse_color, 
