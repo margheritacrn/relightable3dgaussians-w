@@ -108,6 +108,7 @@ class OptimizationParams(ParamGroup):
         self.lambda_zero_one = 1e-3
         self.lambda_predicted_normal = 2e-1
         self.lambda_delta_reg = 1e-3
+        self.lambda_envlight = 0.05
         self.fix_brdf_lr = 0
         super().__init__(parser, "Optimization Parameters")
 
