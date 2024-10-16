@@ -51,12 +51,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
     
     #TODO: remove
-    wild_envlight.load_state_dict(torch.load(dataset.model_path + '/lightNetAE_weights_epoch_99.pth', weights_only=True))
+    # wild_envlight.load_state_dict(torch.load(dataset.model_path + '/lightNetAE_weights_epoch_99.pth', weights_only=True))
     # wild_envlight.load_state_dict(torch.load('output/schloss/lightNetAE_weights_epoch_29.pth', weights_only=True))
 
     # freeze encoder and decoder of envlight model
     for param_name, param in wild_envlight.named_parameters():
-        # if ('encoder' or 'decoder' in param_name):
         if ('decoder' in param_name):
             param.requires_grad = False
 
@@ -92,6 +91,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         """
 
         iter_start.record()
+
+        if iteration == 5000:
+            for param_name, param in wild_envlight.named_parameters():
+                if ('encoder' or 'decoder' in param_name):
+                    param.requires_grad = False
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
