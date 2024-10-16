@@ -1,5 +1,5 @@
 """
-The script allows to convert rgb images in jpg/png format to exr files
+The script converts rgb images in jpg/png format to exr files
 """
 from argparse import ArgumentParser, Namespace
 import os, sys
