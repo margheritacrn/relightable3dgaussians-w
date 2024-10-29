@@ -12,6 +12,7 @@
 import os
 import random
 import json
+from pathlib import Path
 from utils.system_utils import searchForMaxIteration
 from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.gaussian_model import GaussianModel
@@ -21,6 +22,8 @@ import torch
 from utils.system_utils import mkdir_p
 # from scene.NVDIFFREC import save_env_map, load_env
 from scene.light_model import LightNet
+from utils.general_utils import load_npy_tensors
+
 
 class Scene:
 
@@ -35,6 +38,9 @@ class Scene:
         self.loaded_iter = None
         self.gaussians = gaussians
         self.envlight = envlight
+        self.envlight_sh_init_path = args.envlight_sh_init_path
+        if os.path.exists(self.envlight_sh_init_path):
+            self.envlight_sh_init = load_npy_tensors(Path(self.envlight_sh_init_path))
 
         if load_iteration:
             if load_iteration == -1:
