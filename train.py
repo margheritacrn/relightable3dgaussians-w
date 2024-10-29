@@ -25,12 +25,15 @@ from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 import time
 from scene.NVDIFFREC import load_sh_env
-from scene.light_model import LightNet
+from scene.net_models import SHMlp, EmbeddingNet
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
-#TODO: find a better name to wild_envlight
 #TODO: add regularization term for environment light SH coefficients: they must be positive
 #TODO: None lighting conditions
+#TODO: edit dataset.sh_degree, I should use it for sh_mlp with assertion of it being >=4
+#TODO: consider wehther to create a model class. because for ex init envlight sh doesn't make a lot of sense inside
+# Scene-
+
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -39,38 +42,27 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain_ae):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain_embeddings):
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    wild_envlight = LightNet()
-
-    if pretrain_ae:
-    # pretrain envlight AE
-        progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Env light ae pretraining progress")
-        data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_pretrain_epochs,
-                                                    tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
-                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
-    
-    #TODO: fix this
-    else:
-        #wild_envlight_state = torch.load(dataset.model_path + '/lightNetAE_weights_epoch_'+ str(opt.envlight_pretrain_epochs) + '.pth',
-                                          #weights_only=True)
-        #wild_envlight.load_state_dict(wild_envlight_state)
-        progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Env light ae pretraining progress")
-        data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = 1,
-                                                    tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
-                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
-        wild_envlight.load_state_dict(torch.load('output_prior/schloss//lightNetAE_weights_epoch_99.pth', weights_only=True))
-        # wild_envlight.load_state_dict(torch.load('output_prior/schloss/lightNetAE_weights_epoch_29.pth', weights_only=True))
-
-    # freeze decoder of envlight model
-    for param_name, param in wild_envlight.named_parameters():
-        if ('decoder' in param_name):
-            param.requires_grad = False
-
-    scene = Scene(dataset, gaussians, wild_envlight)
+    sh_mlp = SHMlp(dataset.embedding_dim)
+    scene = Scene(dataset, gaussians, sh_mlp)
     envlight_sh_inits = scene.envlight_sh_init
-    gaussians.training_setup(envlight=wild_envlight, training_args=opt)
+    embeddings = scene.embeddings
+    gaussians.training_setup(envlight=sh_mlp, training_args=opt)
+
+    # Initialize embeddings
+    if dataset.init_embeddings:
+        progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Images embeddings pretraining progress")
+        embedding_network = EmbeddingNet(latent_dim=dataset.embedding_dim)
+        embedding_network.optimize_ae(data_path=dataset.source_path,
+                                                                num_epochs = opt.envlight_pretrain_epochs,
+                                                                tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
+                                                                output_path=dataset.model_path
+                                                                )
+        #TODO: filter weights corresponding to encoder dense layer
+        embeddings.load_state_dict(torch.load('output_prior/schloss//lightNetAE_weights_epoch_99.pth', weights_only=True))
+
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -103,7 +95,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain
         iter_start.record()
         # After 5000 iterations train just the SH coefficients MLP
         if iteration == 5000:
-            for param_name, param in wild_envlight.named_parameters():
+            for param_name, param in sh_mlp.named_parameters():
                 if ('encoder' or 'decoder' in param_name):
                     param.requires_grad = False
 
@@ -127,7 +119,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain
         gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
         gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
         # Get SH coefficients of environment lighting for current training image
-        envlight_sh = wild_envlight(data_transforms_envlight(gt_image).unsqueeze(0))
+        #TODO: edit here: sh_envlight_mlp needs an embedding vector as input
+        envlight_sh = sh_mlp(gt_image)
         # Create environment lighting object for the current training image
         envlight = load_sh_env(envlight_sh)
 
