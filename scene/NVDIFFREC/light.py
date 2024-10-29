@@ -142,7 +142,7 @@ class EnvironmentLight(torch.nn.Module):
         nrmvec = gb_normal
 
         diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
-        shaded_col = diff_col*diffuse_irradiance # alternative: torch.nn.functional.softplus?
+        shaded_col = diff_col*diffuse_irradiance
         extras = {"diffuse": diff_col*diffuse_irradiance}
 
         if specular:
