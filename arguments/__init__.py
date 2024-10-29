@@ -49,12 +49,14 @@ class ModelParams(ParamGroup):
         self.sh_degree = 3
         self._source_path = ""
         self._model_path = ""
-        self._envlight_sh_init_path = ""
         self._images = "images"
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.envlight_sh_init_path = ""
+        self.init_embeddings = False
+        self.embedding_dim = 32
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
