@@ -21,16 +21,16 @@ from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import torch
 from utils.system_utils import mkdir_p
 # from scene.NVDIFFREC import save_env_map, load_env
-from scene.light_model import LightNet
+from scene.net_models import SHMlp
 from utils.general_utils import load_npy_tensors
 
 
 class Scene:
 
     gaussians : GaussianModel
-    envlight: LightNet
+    envlight: SHMlp
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, envlight : LightNet, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, envlight : SHMlp, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -59,6 +59,8 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         else:
             assert False, "Could not recognize scene type!"
+        
+        self.embeddings = torch.nn.Embedding(len(scene_info.train_cameras), args.embeddings_dim)
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
