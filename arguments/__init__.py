@@ -49,6 +49,7 @@ class ModelParams(ParamGroup):
         self.sh_degree = 3
         self._source_path = ""
         self._model_path = ""
+        self._envlight_sh_init_path = ""
         self._images = "images"
         self._resolution = -1
         self._white_background = False
@@ -91,6 +92,8 @@ class OptimizationParams(ParamGroup):
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
+        self.envlight_init_until_iter = 5_000
+        self.envlight_loss_until_iter = 50_000
         self.brdf_mlp_lr_init = 1.6e-2
         self.brdf_mlp_lr_final = 1.6e-3 
         self.brdf_mlp_lr_delay_mult = 0.01
@@ -105,10 +108,11 @@ class OptimizationParams(ParamGroup):
         self.envlight_pretrain_epochs = 50
         self.normal_reg_from_iter = 0
         self.normal_reg_util_iter = 30_000
-        self.lambda_zero_one = 1e-3
+        self.lambda_zero_one = 0 # 1e-3
         self.lambda_predicted_normal = 2e-1
         self.lambda_delta_reg = 1e-3
         self.lambda_envlight = 0.05
+        self.lambda_envlight_init = 0.05
         self.fix_brdf_lr = 0
         super().__init__(parser, "Optimization Parameters")
 
