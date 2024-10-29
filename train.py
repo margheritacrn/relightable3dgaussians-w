@@ -12,7 +12,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_loss2
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_loss2, envlight_init_loss
 from gaussian_renderer import render, network_gui, render_lighting
 import sys
 from scene import Scene, GaussianModel
@@ -30,7 +30,7 @@ from scene.light_model import LightNet
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
 #TODO: find a better name to wild_envlight
 #TODO: add regularization term for environment light SH coefficients: they must be positive
-
+#TODO: None lighting conditions
 
 try:
     from torch.utils.tensorboard import SummaryWriter
@@ -39,27 +39,37 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain_ae):
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
     wild_envlight = LightNet()
 
+    if pretrain_ae:
     # pretrain envlight AE
-    progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Env light ae pretraining progress")
-    data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_pretrain_epochs,
-                                                  tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
-                                                   return_losses = False, output_path=dataset.model_path, return_data_transf=True)
+        progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Env light ae pretraining progress")
+        data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = opt.envlight_pretrain_epochs,
+                                                    tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
+                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
     
-    #TODO: remove
-    # wild_envlight.load_state_dict(torch.load(dataset.model_path + '/lightNetAE_weights_epoch_99.pth', weights_only=True))
-    # wild_envlight.load_state_dict(torch.load('output/schloss/lightNetAE_weights_epoch_29.pth', weights_only=True))
+    #TODO: fix this
+    else:
+        #wild_envlight_state = torch.load(dataset.model_path + '/lightNetAE_weights_epoch_'+ str(opt.envlight_pretrain_epochs) + '.pth',
+                                          #weights_only=True)
+        #wild_envlight.load_state_dict(wild_envlight_state)
+        progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Env light ae pretraining progress")
+        data_transforms_envlight = wild_envlight.pretrain_ae(data_path=dataset.source_path, num_epochs = 1,
+                                                    tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
+                                                    return_losses = False, output_path=dataset.model_path, return_data_transf=True)
+        wild_envlight.load_state_dict(torch.load('output_prior/schloss//lightNetAE_weights_epoch_99.pth', weights_only=True))
+        # wild_envlight.load_state_dict(torch.load('output_prior/schloss/lightNetAE_weights_epoch_29.pth', weights_only=True))
 
-    # freeze encoder and decoder of envlight model
+    # freeze decoder of envlight model
     for param_name, param in wild_envlight.named_parameters():
         if ('decoder' in param_name):
             param.requires_grad = False
 
     scene = Scene(dataset, gaussians, wild_envlight)
+    envlight_sh_inits = scene.envlight_sh_init
     gaussians.training_setup(envlight=wild_envlight, training_args=opt)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
@@ -91,7 +101,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         """
 
         iter_start.record()
-
+        # After 5000 iterations train just the SH coefficients MLP
         if iteration == 5000:
             for param_name, param in wild_envlight.named_parameters():
                 if ('encoder' or 'decoder' in param_name):
@@ -106,12 +116,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         gt_image = viewpoint_cam.original_image.cuda()
+        gt_light_condition = viewpoint_cam.image_name[:-9]
+        init_light_condition = next((key for key in envlight_sh_inits if gt_light_condition in key), None)
+        if init_light_condition is None:
+            continue
+        else:
+            gt_envlight_sh_init = envlight_sh_inits[init_light_condition]
+            gt_envlight_sh_init = torch.tensor(gt_envlight_sh_init, dtype=torch.float32, device="cuda")
 
         gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
         gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
-        # get SH coefficients of environment lighting for current gt image
+        # Get SH coefficients of environment lighting for current training image
         envlight_sh = wild_envlight(data_transforms_envlight(gt_image).unsqueeze(0))
-        # create environment lighting object
+        # Create environment lighting object for the current training image
         envlight = load_sh_env(envlight_sh)
 
         # Render
@@ -131,16 +148,20 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim(image, gt_image))
         for k in losses_extra.keys():
             loss += getattr(opt, f'lambda_{k}')* losses_extra[k]
-        # wildenvlight loss
-        dir_pp = (gaussians.get_xyz - viewpoint_cam.camera_center.repeat(gaussians.get_opacity.shape[0], 1))
-        dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-        # create a copy of the normals without gradient tracking for envlight loss
-        normals = gaussians.get_normal(dir_pp_normalized=dir_pp_normalized).data.clone()
-        roughness = gaussians.get_roughness
-        roughness = roughness.data.clone()
-        # envl_loss = envlight_loss(envlight, normals)
-        envl_loss = envlight_loss2(envlight, normals, roughness)
-        loss += opt.lambda_envlight*envl_loss
+        # Envlight losses
+        if iteration <= opt.envlight_loss_until_iter:
+            dir_pp = (gaussians.get_xyz - viewpoint_cam.camera_center.repeat(gaussians.get_opacity.shape[0], 1))
+            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+            # Create a copy of the normals without gradient tracking for envlight loss computation
+            normals = gaussians.get_normal(dir_pp_normalized=dir_pp_normalized).data.clone()
+            envl_loss = envlight_loss(envlight, normals)
+            # roughness = gaussians.get_roughness
+            # roughness = roughness.data.clone()
+            # envl_loss = envlight_loss2(envlight, normals, roughness)
+            loss += opt.lambda_envlight*envl_loss
+        if opt.lambda_envlight_init > 0 and iteration <= opt.envlight_init_until_iter:
+            envl_init_loss = envlight_init_loss(envlight_sh, gt_envlight_sh_init)
+            loss += opt.lambda_envlight_init * envl_init_loss
         loss.backward()
 
         iter_end.record()
@@ -277,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--pretrain_ae", action="store_true")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -286,9 +308,9 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    network_gui.init(args.ip, args.port)
+    # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.pretrain_ae)
 
     # All done
     print("\nTraining complete.")
