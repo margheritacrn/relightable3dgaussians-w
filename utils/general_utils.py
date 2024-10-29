@@ -14,6 +14,9 @@ import sys
 from datetime import datetime
 import numpy as np
 import random
+import os
+import glob
+from pathlib import Path
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
@@ -189,3 +192,16 @@ def rand_hemisphere_dir(N: torch.Tensor, n: torch.Tensor):
     d = tangent*d[...,0].unsqueeze(-1) + bitangent*d[...,1].unsqueeze(-1) + normals*d[...,2].unsqueeze(-1) 
 
     return d
+
+
+def load_npy_tensors(path: Path):
+    """The function loads all npy tensors in path."""
+    npy_tensors = {}
+    npy_tensors_fnames = path.glob("*.npy")
+    
+    # Corrected indentation for the loop
+    for npy_tensor_fname in npy_tensors_fnames:
+        npy_tensor = np.load(npy_tensor_fname)
+        npy_tensors[str(npy_tensor_fname)] = npy_tensor
+
+    return npy_tensors
