@@ -30,7 +30,7 @@ from scene.net_models import SHMlp, EmbeddingNet
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
 #TODO: add regularization term for environment light SH coefficients: they must be positive
 #TODO: None lighting conditions
-#TODO: edit dataset.sh_degree, I should use it for sh_mlp with assertion of it being >=4
+#TODO: edit dataset.sh_degree, I should use it for envlight_sh_mlp with assertion of it being >=4
 #TODO: consider wehther to create a model class. because for ex init envlight sh doesn't make a lot of sense inside
 # Scene-
 
@@ -42,27 +42,41 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain_embeddings):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     tb_writer = prepare_output_and_logger(dataset)
     gaussians = GaussianModel(dataset.sh_degree)
-    sh_mlp = SHMlp(dataset.embedding_dim)
-    scene = Scene(dataset, gaussians, sh_mlp)
+    envlight_sh_mlp = SHMlp(embedding_dim=dataset.embeddings_dim).cuda()
+    scene = Scene(dataset, gaussians, envlight_sh_mlp)
     envlight_sh_inits = scene.envlight_sh_init
     embeddings = scene.embeddings
-    gaussians.training_setup(envlight=sh_mlp, training_args=opt)
-
+    gaussians.training_setup(envlight=envlight_sh_mlp, embeddings=embeddings, training_args=opt)
+    viewpoint_stack = scene.getTrainCameras().copy()
     # Initialize embeddings
     if dataset.init_embeddings:
-        progress_bar_light_ae = tqdm(range(1, opt.envlight_pretrain_epochs + 1), desc = "Images embeddings pretraining progress")
-        embedding_network = EmbeddingNet(latent_dim=dataset.embedding_dim)
-        embedding_network.optimize_ae(data_path=dataset.source_path,
-                                                                num_epochs = opt.envlight_pretrain_epochs,
-                                                                tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
-                                                                output_path=dataset.model_path
+        embedding_network = EmbeddingNet(latent_dim=dataset.embeddings_dim)
+        embedding_network.cuda()
+        checkpoint = dataset.model_path + f'/EmbeddingNet_model_epoch_{opt.embednet_pretrain_epochs-1}.pth'
+        #checkpoint = './output_adjusted_envloss_prior0_1/schloss'+ f'/EmbeddingNet_model_epoch_{opt.embednet_pretrain_epochs-1}.pth'
+        if os.path.exists(checkpoint):
+            state_dict = torch.load(checkpoint, weights_only=True)
+            embedding_network.load_state_dict(state_dict)
+            data_transforms = embedding_network.optimize_ae(data_path=dataset.source_path, get_datatransforms_only=True)
+        else:
+            progress_bar_light_ae = tqdm(range(1, opt.embednet_pretrain_epochs + 1), desc = "Training images embeddings pretraining progress")
+            output_embednet = embedding_network.optimize_ae(data_path=dataset.source_path,
+                                                                    num_epochs = opt.embednet_pretrain_epochs,
+                                                                    tensorboard_writer = tb_writer, progress_bar=progress_bar_light_ae,
+                                                                    output_path=dataset.model_path, return_outputs=True
                                                                 )
-        #TODO: filter weights corresponding to encoder dense layer
-        embeddings.load_state_dict(torch.load('output_prior/schloss//lightNetAE_weights_epoch_99.pth', weights_only=True))
-
+            data_transforms = output_embednet["data_transforms"]
+        embedding_network.eval()
+        with torch.no_grad():
+            batch_imgs = torch.stack([data_transforms(viewpoint_cam.original_image) for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
+            embeddings_inits = embedding_network(batch_imgs)
+        del embedding_network
+        torch.cuda.empty_cache()
+        # Initialize per-image embeddings
+        embeddings.weight = torch.nn.Parameter(embeddings_inits)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -93,11 +107,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain
         """
 
         iter_start.record()
-        # After 5000 iterations train just the SH coefficients MLP
-        if iteration == 5000:
-            for param_name, param in sh_mlp.named_parameters():
-                if ('encoder' or 'decoder' in param_name):
-                    param.requires_grad = False
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
@@ -107,20 +116,24 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain
         if not viewpoint_stack:
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+        viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
         gt_image = viewpoint_cam.original_image.cuda()
         gt_light_condition = viewpoint_cam.image_name[:-9]
         init_light_condition = next((key for key in envlight_sh_inits if gt_light_condition in key), None)
+        """
         if init_light_condition is None:
             continue
         else:
-            gt_envlight_sh_init = envlight_sh_inits[init_light_condition]
-            gt_envlight_sh_init = torch.tensor(gt_envlight_sh_init, dtype=torch.float32, device="cuda")
+        """
+        # gt_envlight_sh_init = envlight_sh_inits[init_light_condition]
+       #  gt_envlight_sh_init = torch.tensor(gt_envlight_sh_init, dtype=torch.float32, device="cuda")
 
         gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
         gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
         # Get SH coefficients of environment lighting for current training image
-        #TODO: edit here: sh_envlight_mlp needs an embedding vector as input
-        envlight_sh = sh_mlp(gt_image)
+        #TODO: edit here: sh_envlight_mlp needs an embedding vector as input. I probably need the camera index. Compare vewpoint stack content with scene_info in scne/__ini__.py
+        embedding_gt_image = embeddings(viewpoint_cam_id)
+        envlight_sh = envlight_sh_mlp(embedding_gt_image)
         # Create environment lighting object for the current training image
         envlight = load_sh_env(envlight_sh)
 
@@ -173,7 +186,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, pretrain
 
             # Log and save
             losses_extra['psnr'] = psnr(image, gt_image).mean()
-            training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (envlight, pipe, background))
+            training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, embeddings, envlight_sh_mlp, render, (pipe, background))
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -217,7 +230,7 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elapsed, testing_iterations, scene : Scene, renderFunc, renderArgs):
+def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elapsed, testing_iterations, scene : Scene, embeddings, envlight_sh_mlp, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -228,49 +241,55 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
     # Report test and samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = ({'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                              {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
-
-        for config in validation_configs:
-            if config['cameras'] and len(config['cameras']) > 0:
-                images = torch.tensor([], device="cuda")
-                gts = torch.tensor([], device="cuda")
-                for idx, viewpoint in enumerate(config['cameras']):
-                    render_pkg = renderFunc(viewpoint, scene.gaussians, *renderArgs)
-                    image = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                    gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
-                    images = torch.cat((images, image.unsqueeze(0)), dim=0)
-                    gts = torch.cat((gts, gt_image.unsqueeze(0)), dim=0)
-                    if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                        if iteration == testing_iterations[0]:
-                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
-                        for k in render_pkg.keys():
-                            if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm":
-                                continue
-                            if k == "depth":
-                                image_k = apply_depth_colormap(-render_pkg[k][0][...,None])
-                                image_k = image_k.permute(2,0,1)
-                            elif k == "alpha":
-                                image_k = apply_depth_colormap(render_pkg[k][0][...,None], min=0., max=1.)
-                                image_k = image_k.permute(2,0,1)
-                            else:
-                                if "normal" in k:
-                                    render_pkg[k] = 0.5 + (0.5*render_pkg[k]) # (-1, 1) -> (0, 1)
-                                image_k = torch.clamp(render_pkg[k], 0.0, 1.0)
-                            tb_writer.add_images(config['name'] + "_view_{}/{}".format(viewpoint.image_name, k), image_k[None], global_step=iteration)
-                        
-                        """if renderArgs[0].brdf:
-                            lighting = render_lighting(scene.gaussians, resolution=(512, 1024))
-                            if tb_writer:
-                                tb_writer.add_images(config['name'] + "/lighting", lighting[None], global_step=iteration)
-                        """
-                l1_test = l1_loss(images, gts)
-                psnr_test = psnr(images, gts).mean()  
-                print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
-                if tb_writer:
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                    tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+        #validation_configs = (#{'name': 'test', 'cameras' : scene.getTestCameras()}, 
+                            #  {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
+        validation_configs = [{'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]}]
+        with torch.no_grad():
+            for config in validation_configs:
+                if config['cameras'] and len(config['cameras']) > 0:
+                    images = torch.tensor([], device="cuda")
+                    gts = torch.tensor([], device="cuda")
+                    for idx, viewpoint in enumerate(config['cameras']):
+                        gt_image = viewpoint.original_image.cuda()
+                        viewpoint_cam_id = torch.tensor([viewpoint.uid], device = 'cuda')
+                        embedding_gt_image = embeddings(viewpoint_cam_id)
+                        envlight_sh = envlight_sh_mlp(embedding_gt_image)
+                        envlight = load_sh_env(envlight_sh)
+                        render_pkg = renderFunc(viewpoint, scene.gaussians, envlight, *renderArgs)
+                        image = torch.clamp(render_pkg["render"], 0.0, 1.0)
+                        gt_image = torch.clamp(gt_image, 0.0, 1.0)
+                        images = torch.cat((images, image.unsqueeze(0)), dim=0)
+                        gts = torch.cat((gts, gt_image.unsqueeze(0)), dim=0)
+                        if tb_writer and (idx < 10):
+                            tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                            if iteration == testing_iterations[0]:
+                                tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            for k in render_pkg.keys():
+                                if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm":
+                                    continue
+                                if k == "depth":
+                                    image_k = apply_depth_colormap(-render_pkg[k][0][...,None])
+                                    image_k = image_k.permute(2,0,1)
+                                elif k == "alpha":
+                                    image_k = apply_depth_colormap(render_pkg[k][0][...,None], min=0., max=1.)
+                                    image_k = image_k.permute(2,0,1)
+                                else:
+                                    if "normal" in k:
+                                        render_pkg[k] = 0.5 + (0.5*render_pkg[k]) # (-1, 1) -> (0, 1)
+                                    image_k = torch.clamp(render_pkg[k], 0.0, 1.0)
+                                tb_writer.add_images(config['name'] + "_view_{}/{}".format(viewpoint.image_name, k), image_k[None], global_step=iteration)
+                            
+                            """if renderArgs[0].brdf:
+                                lighting = render_lighting(scene.gaussians, resolution=(512, 1024))
+                                if tb_writer:
+                                    tb_writer.add_images(config['name'] + "/lighting", lighting[None], global_step=iteration)
+                            """
+                    l1_test = l1_loss(images, gts)
+                    psnr_test = psnr(images, gts).mean()  
+                    print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                    if tb_writer:
+                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
+                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", scene.gaussians.get_opacity, iteration)
@@ -291,7 +310,6 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--pretrain_ae", action="store_true")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
     
@@ -303,7 +321,7 @@ if __name__ == "__main__":
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations, args.pretrain_ae)
+    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations)
 
     # All done
     print("\nTraining complete.")

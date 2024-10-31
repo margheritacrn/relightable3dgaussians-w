@@ -56,7 +56,7 @@ class ModelParams(ParamGroup):
         self.eval = False
         self.envlight_sh_init_path = ""
         self.init_embeddings = False
-        self.embedding_dim = 32
+        self.embeddings_dim = 32
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -96,18 +96,15 @@ class OptimizationParams(ParamGroup):
         self.densify_grad_threshold = 0.0002
         self.envlight_init_until_iter = 5_000
         self.envlight_loss_until_iter = 50_000
-        self.brdf_mlp_lr_init = 1.6e-2
-        self.brdf_mlp_lr_final = 1.6e-3 
-        self.brdf_mlp_lr_delay_mult = 0.01
-        self.brdf_mlp_lr_max_steps = 30_000
         self.normal_lr = 0.0002
         self.specular_lr = 0.0002
         self.roughness_lr = 0.0002
         self.metalness_lr = 0.0002
         self.albedo_lr = 0.0002
-        self.envlight_lr = 0.001
-        self.envlight_wd = 0
-        self.envlight_pretrain_epochs = 50
+        self.embedding_lr = 0.0002
+        self.envlight_sh_lr = 0.0002
+        self.envlight_sh_wd = 0
+        self.embednet_pretrain_epochs = 50
         self.normal_reg_from_iter = 0
         self.normal_reg_util_iter = 30_000
         self.lambda_zero_one = 0 # 1e-3

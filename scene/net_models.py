@@ -93,7 +93,11 @@ class EmbeddingNet(nn.Module):
    
     def optimize_ae(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
                     verbose=False, tensorboard_writer=None,
-                    progress_bar=None, output_path=None, return_outputs=False):
+                    progress_bar=None, output_path=None, get_datatransforms_only = False, 
+                    return_outputs=False):
+        if get_datatransforms_only:
+            _, _, data_transforms = load_train_test(datapath=data_path, resize_dim=resize_dim, batch_size=batch_size)
+            return data_transforms
         self.cuda()
         loss_ = self.ae_loss()
         losses_tr_all = []
@@ -149,7 +153,7 @@ class EmbeddingNet(nn.Module):
         if return_outputs:
             out = {'test_losses': losses_test_all, 
                    'train_losses': losses_tr_all,
-                   'data_transfomrms': data_transforms
+                   'data_transforms': data_transforms
                    }
             return out
 
@@ -168,7 +172,7 @@ class SHMlp(nn.Module):
 
 
         self.mlp = nn.Sequential(
-            nn.Linear(self.embedding_dim_dim, self.dense_layer_size),
+            nn.Linear(self.embedding_dim, self.dense_layer_size),
             nn.Dropout(p=0.2),
             nn.ReLU(), 
             nn.Linear(self.dense_layer_size, self.dense_layer_size),
@@ -184,16 +188,17 @@ class SHMlp(nn.Module):
         self.sh_rest.weight.data.zero_()
         self.sh_rest.bias.data.zero_()
 
-        for linear_layer in [self.encoder_dense, self.decoder_dense. self.mlp, self.sh_all, self.sh_base]:
+        for linear_layer in [self.mlp, self.sh_all, self.sh_base]:
              linear_layer.apply(init_weights)
 
 
     def forward(self, e, sh_all=True):
+        x = self.mlp(e)
         if sh_all:
-            sh_coeffs = self.sh_all(e).view(-1, self.sh_dim, 3)
+            sh_coeffs = self.sh_all(x).view(-1, self.sh_dim, 3)
         else:
-            sh_base = self.sh_base(e)
-            sh_rest = self.sh_rest(e)
+            sh_base = self.sh_base(x)
+            sh_rest = self.sh_rest(x)
             sh_coeffs = torch.cat([sh_base, sh_rest], dim=-1).view(-1, self.sh_dim, 3)
         return sh_coeffs
 
@@ -205,4 +210,3 @@ class SHMlp(nn.Module):
     def save_weights(self, path: str, epoch: int):
         torch.save(self.state_dict(), path + "/SHMlp_model_epoch_"+str(epoch)+".pth")
 
-   

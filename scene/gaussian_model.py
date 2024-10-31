@@ -185,7 +185,7 @@ class GaussianModel:
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def training_setup(self, envlight, training_args):
+    def training_setup(self, envlight, embeddings, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -201,7 +201,8 @@ class GaussianModel:
             {'params': [self._specular], 'lr': training_args.specular_lr, "name": "specular"},
             {'params': [self._metalness], 'lr': training_args.metalness_lr, "name": "metalness"},
             {'params': [self._normal], 'lr': training_args.normal_lr, "name": "normal"},
-            {'params': envlight.parameters(), 'lr': training_args.envlight_lr, 'weight_decay': training_args.envlight_wd, "name": 'envlight'}
+            {'params': envlight.parameters(), 'lr': training_args.envlight_sh_lr, 'weight_decay': training_args.envlight_sh_wd, "name": 'envlight'},
+            {'params': embeddings.parameters(), 'lr': training_args.embedding_lr, "name": 'embeddings'}
         ]
         self._normal2.requires_grad_(requires_grad=False)
         l.extend([
@@ -227,23 +228,7 @@ class GaussianModel:
         
         self.f_rest_scheduler_args = get_const_lr_func(training_args.feature_lr / 20.0)
 
-        
-    """
-    def _update_learning_rate(self, iteration, param):
-        for param_group in self.optimizer.param_groups:
-            if param_group["name"] == param:
-                try:
-                    lr = getattr(self, f"{param}_scheduler_args", self.brdf_mlp_scheduler_args)(iteration)
-                    param_group['lr'] = lr
-                    return lr
-                except AttributeError:
-                    pass
-    def update_learning_rate(self, iteration):
-        ''' Learning rate scheduling per step '''
-        self._update_learning_rate(iteration, "xyz")
-        for param in ["envlight","roughness","specular","normal","f_dc", "f_rest"]:
-                lr = self._update_learning_rate(iteration, param)
-    """
+
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -251,7 +236,8 @@ class GaussianModel:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
-                return lr
+            if iteration == 30000 and (param_group["name"] == "envlight" or param_group["name"] == "embeddings"):
+                param_group['lr'] = 0.0001
 
 
     def construct_list_of_attributes(self, viewer_fmt=False):
@@ -379,7 +365,7 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "envlight":
+            if group["name"] == "envlight" or group["name"] == "embeddings":
                 continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -396,7 +382,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "envlight":
+            if group["name"] == "envlight" or group["name"] == "embeddings":
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
@@ -437,7 +423,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "envlight":
+            if group["name"] == "envlight" or group["name"] == "embeddings" :
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
