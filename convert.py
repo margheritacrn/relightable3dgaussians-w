@@ -8,7 +8,7 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
+"""Usage: python convert.py -s **dataset_path**, ex. ../data/schloss_nerfosr_to_colmap"""
 import os
 import logging
 from argparse import ArgumentParser
