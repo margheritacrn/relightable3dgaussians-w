@@ -21,7 +21,7 @@ from utils.sh_utils import gauss_weierstrass_kernel, eval_sh
 
 class EnvironmentLight(torch.nn.Module):
 
-    def __init__(self, base: torch.Tensor, base_is_SH: bool, sh_degree : int = 4):
+    def __init__(self, base: torch.Tensor, base_is_SH: bool =True, sh_degree : int = 4):
         self.base = base.squeeze()
         self.base_is_SH = base_is_SH
         self.sh_degree = sh_degree
@@ -174,12 +174,16 @@ class EnvironmentLight(torch.nn.Module):
             extras['specular'] = extras['diffuse']
 
         if tone:
-            # apply tone mapping and clamp in range [0,1]
-            rgb = util.aces_film(shaded_col)
+            # apply tone mapping and clamp in range [0,1]: linear --> sRGB
+            rgb = util.linear_to_sRGB(shaded_col)
         else:
             rgb = shaded_col.clamp(min=0.0, max=1.0)
 
         return rgb, extras
+    
+
+    def set_base(self, base: torch.Tensor):
+        self.base = base.squeeze()
 
 
 # Load and store envmaps (cubemap-SH representations)

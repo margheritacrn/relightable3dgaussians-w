@@ -91,7 +91,7 @@ class EmbeddingNet(nn.Module):
         torch.save(self.state_dict(), path + "/EmbeddingNet_model_epoch_"+str(epoch)+".pth")
 
    
-    def optimize_ae(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
+    def optimize(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
                     verbose=False, tensorboard_writer=None,
                     progress_bar=None, output_path=None, get_datatransforms_only = False, 
                     return_outputs=False):

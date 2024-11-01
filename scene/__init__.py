@@ -21,26 +21,19 @@ from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import torch
 from utils.system_utils import mkdir_p
 # from scene.NVDIFFREC import save_env_map, load_env
-from scene.net_models import SHMlp
-from utils.general_utils import load_npy_tensors
 
 
 class Scene:
 
     gaussians : GaussianModel
-    envlight: SHMlp
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, envlight : SHMlp, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
         """b
         :param path: Path to colmap scene main folder.
         """
         self.model_path = args.model_path
         self.loaded_iter = None
         self.gaussians = gaussians
-        self.envlight = envlight
-        self.envlight_sh_init_path = args.envlight_sh_init_path
-        if os.path.exists(self.envlight_sh_init_path):
-            self.envlight_sh_init = load_npy_tensors(Path(self.envlight_sh_init_path))
 
         if load_iteration:
             if load_iteration == -1:
@@ -59,8 +52,7 @@ class Scene:
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
         else:
             assert False, "Could not recognize scene type!"
-        
-        self.embeddings = torch.nn.Embedding(len(scene_info.train_cameras), args.embeddings_dim)
+
 
         if not self.loaded_iter:
             with open(scene_info.ply_path, 'rb') as src_file, open(os.path.join(self.model_path, "input.ply") , 'wb') as dest_file:
@@ -105,6 +97,7 @@ class Scene:
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
+
     def save(self, iteration): #TODO: edit here
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
@@ -112,8 +105,11 @@ class Scene:
             brdf_mlp_path = os.path.join(self.model_path, f"brdf_mlp/iteration_{iteration}/brdf_mlp.hdr")
             mkdir_p(os.path.dirname(brdf_mlp_path))
             save_env_map(brdf_mlp_path, self.gaussians.brdf_mlp)
+
+
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]
+
 
     def getTestCameras(self, scale=1.0):
         return self.test_cameras[scale]
