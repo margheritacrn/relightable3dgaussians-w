@@ -206,7 +206,7 @@ def envlight_loss2(envlight: EnvironmentLight, normals: torch.Tensor, roughness:
         return l2_norm_diff
     
 
-def envlight_init_loss(sh_output: torch.Tensor, sh_envmap_init: torch.Tensor):
+def envlight_prior_loss(sh_output: torch.Tensor, sh_envmap_init: torch.Tensor):
     return l2_loss(sh_output, sh_envmap_init)
 
 
