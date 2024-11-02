@@ -49,6 +49,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
     scene = Scene(dataset, gaussians, envlight_sh_mlp)
     envlight_sh_inits = scene.envlight_sh_init
     embeddings = scene.embeddings
+    embeddings.cuda()
     gaussians.training_setup(envlight=envlight_sh_mlp, embeddings=embeddings, training_args=opt)
     viewpoint_stack = scene.getTrainCameras().copy()
     # Initialize embeddings
@@ -56,7 +57,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         embedding_network = EmbeddingNet(latent_dim=dataset.embeddings_dim)
         embedding_network.cuda()
         checkpoint = dataset.model_path + f'/EmbeddingNet_model_epoch_{opt.embednet_pretrain_epochs-1}.pth'
-        #checkpoint = './output_adjusted_envloss_prior0_1/schloss'+ f'/EmbeddingNet_model_epoch_{opt.embednet_pretrain_epochs-1}.pth'
+        # checkpoint = './output_adjusted_envloss_prior0_1/schloss'+ f'/EmbeddingNet_model_epoch_{opt.embednet_pretrain_epochs-1}.pth'
         if os.path.exists(checkpoint):
             state_dict = torch.load(checkpoint, weights_only=True)
             embedding_network.load_state_dict(state_dict)
