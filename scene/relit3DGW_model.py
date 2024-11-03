@@ -11,6 +11,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import numpy as np
 from utils.system_utils import mkdir_p
+from torch.utils.data import TensorDataset, DataLoader
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
@@ -79,6 +80,17 @@ class Relightable3DGW:
         torch.cuda.empty_cache()
         # Initialize per-image embeddings
         self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
+
+    def initialize_mlp(self):
+        viewpoint_stack = self.scene.getTrainCameras().copy()
+        imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid], device = 'cuda')) for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
+        lighting_conditions = [viewpoint_cam.image_name[:-9] for viewpoint_cam in viewpoint_stack]
+        target_sh = torch.stack([self.envlight_sh_priors[lc] for lc in lighting_conditions])
+        train_data = TensorDataset(imgs, target_sh)
+        batch_size = 64
+        dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+        self.envlight_sh_mlp.initialize(dataloader, epochs = 100, optim=self.optimizer)
+        self.embeddings.requires_grad_ = True
 
 
     def training_set_up(self):
