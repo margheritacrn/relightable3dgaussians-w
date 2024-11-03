@@ -144,15 +144,24 @@ def eval_sh(deg, sh, dirs):
                             C4[8] * (xx * (xx - 3 * yy) - yy * (3 * xx - yy)) * sh[..., 24])
     return result
 
+
 def RGB2SH(rgb):
     return (rgb - 0.5) / C0
+
 
 def SH2RGB(sh):
     return sh * C0 + 0.5
 
+
 def gauss_weierstrass_kernel(roughness, sh_degree):
     """The function computes the sh_dim coefficients of
-    Gauss Weierstrass kernel for smoothing in SH domain.
+    Gauss Weierstrass kernel for smoothing in SH domain. The standard
+    deviation of the kernel is proportional to the roughness input value.
+    Args:
+        roughness (torch.tensor): [..., 1]
+        sh_degre (int): degree of the spherical harmonics coefficients.
+    Returns:
+        SH coefficients of Gaussian blur kernel of sigma = sqrt(roughness)
     """
     l_idxs = torch.arange(sh_degree + 1, dtype=torch.float32).view(1, -1).cuda()
     gw_kernel_sh = torch.zeros((roughness.shape[0],(sh_degree + 1)**2)).cuda()
@@ -165,6 +174,13 @@ def gauss_weierstrass_kernel(roughness, sh_degree):
         
 
     return gw_kernel_sh
+
+def sinc_windowing(sh_coeffs, sh_degree, deg=1):
+      sinc_coeffs = torch.zeros((sh_degree + 1)**2)
+      for l in range(sh_degree):
+        pass
+      
+
 
 
 def get_coefficients_matrix(xres,l_max=2):

@@ -130,7 +130,7 @@ def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N: int = 10
     If the number of normals vectors is greater than subset_size=100, extraxct a random subset.
     Args:
         envlight: environment lighting
-        normals: normal vectors of shape B x 3
+        normals: normal vectors of shape [..., 3]
         N: number of directions samples
     """
     assert len(normals.shape) == 2 and normals.shape[-1] == 3 , "error: n must have size  L X 3"
