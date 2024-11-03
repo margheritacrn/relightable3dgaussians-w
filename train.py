@@ -27,6 +27,7 @@ import time
 from scene.NVDIFFREC import load_sh_env
 from scene.net_models import SHMlp, EmbeddingNet
 import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
 #TODO: add regularization term for environment light SH coefficients: they must be positive
@@ -84,6 +85,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         torch.cuda.empty_cache()
         # Initialize per-image embeddings
         embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
+    # Pretrain SH mlp
+    embeddings.requires_grad_ = False
+    imgs = torch.stack([embeddings(torch.tensor([viewpoint_cam.uid], device = 'cuda')) for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
+    lighting_conditions = [viewpoint_cam.image_name[:-9] for viewpoint_cam in viewpoint_stack]
+    target_sh = torch.stack([envlight_sh_inits[lc] for lc in lighting_conditions])
+    train_data = TensorDataset(imgs, target_sh)
+    batch_size = 64
+    dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    envlight_sh_mlp.initialize(dataloader, epochs = 100, optim=gaussians.optimizer)
+    embeddings.requires_grad_ = True
+
+
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")

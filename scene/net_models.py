@@ -210,3 +210,21 @@ class SHMlp(nn.Module):
     def save_weights(self, path: str, epoch: int):
         torch.save(self.state_dict(), path + "/SHMlp_model_epoch_"+str(epoch)+".pth")
 
+
+    def initialize(self, dataloader, epochs, optim=None):
+        if optim is None:
+            optim = self.get_optimizer()
+        loss_ = torch.nn.MSELoss()
+        for epoch in range(epochs):
+            self.train()
+            for batch in dataloader:
+                optim.zero_grad() 
+                input = batch[0].cuda()
+                sh_target = batch[1].cuda()
+                sh_out = self(input)
+                mse = loss_(sh_target, sh_out)
+                mse.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
+                optim.step() 
+
+
