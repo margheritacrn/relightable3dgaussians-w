@@ -101,10 +101,6 @@ class Scene:
     def save(self, iteration): #TODO: edit here
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
-        if self.gaussians.brdf:
-            brdf_mlp_path = os.path.join(self.model_path, f"brdf_mlp/iteration_{iteration}/brdf_mlp.hdr")
-            mkdir_p(os.path.dirname(brdf_mlp_path))
-            save_env_map(brdf_mlp_path, self.gaussians.brdf_mlp)
 
 
     def getTrainCameras(self, scale=1.0):

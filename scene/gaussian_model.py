@@ -276,21 +276,22 @@ class GaussianModel:
     def construct_list_of_attributes(self, viewer_fmt=False):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         # All channels except the 3 DC
-        for i in range(self._albedo.shape[1]*self._albedo.shape[2]):
+        for i in range(self._albedo.shape[1]):
             l.append('albedo_{}'.format(i))
+        """
         for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
             l.append('f_rest_{}'.format(i))
-        l.append(['nx2', 'ny2', 'nz2'])
+        """
+        l.extend(['nx2', 'ny2', 'nz2'])
         l.append('opacity')
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
-        if not viewer_fmt:
-            l.append('roughness')
-            l.append('metalness')
-            for i in range(self._specular.shape[1]):
-                l.append('specular{}'.format(i))
+        l.append('roughness')
+        l.append('metalness')
+        for i in range(self._specular.shape[1]):
+            l.append('specular{}'.format(i))
         return l
 
     def save_ply(self, path, viewer_fmt=False):
@@ -317,9 +318,9 @@ class GaussianModel:
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         if not viewer_fmt:
-            attributes = np.concatenate((xyz, normals, normals2, albedo, f_rest, opacities, scale, rotation, roughness, metalness, specular), axis=1)
+            attributes = np.concatenate((xyz, normals, normals2, albedo, opacities, scale, rotation, roughness, metalness, specular), axis=1)
         else:
-            attributes = np.concatenate((xyz, normals, albedo, f_rest, opacities, scale, rotation), axis=1)
+            attributes = np.concatenate((xyz, normals, albedo, opacities, scale, rotation, roughness, metalness, specular), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)

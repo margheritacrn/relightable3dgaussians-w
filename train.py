@@ -123,9 +123,6 @@ def training(cfg, testing_iterations, saving_iterations):
             # Create a copy of the normals without gradient tracking for envlight loss computation
             normals = model.gaussians.get_normal(dir_pp_normalized=dir_pp_normalized).data.clone()
             envl_loss = envlight_loss(model.envlight, normals)
-            # roughness = gaussians.get_roughness
-            # roughness = roughness.data.clone()
-            # envl_loss = envlight_loss2(envlight, normals, roughness)
             loss += cfg.optimizer.lambda_envlight*envl_loss
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
             envl_init_loss = envlight_prior_loss(envlight_sh, gt_envlight_sh_prior)
@@ -153,8 +150,8 @@ def training(cfg, testing_iterations, saving_iterations):
                             model, render, (cfg.pipe, background))
             if iteration in saving_iterations or iteration == cfg.optimizer.iterations:
                 #TODO: turn into  model.save iteration
-                print("\n[ITER {}] Saving Gaussians".format(iteration))
-                model.scene.save(iteration)
+                print(f" ITER: {iteration} saving model")
+                model.save(iteration)
 
             # Densification
             if iteration < cfg.optimizer.densify_until_iter:
