@@ -175,7 +175,7 @@ class EnvironmentLight(torch.nn.Module):
 
         if tone:
             # apply tone mapping and clamp in range [0,1]: linear --> sRGB
-            rgb = util.linear_to_sRGB(shaded_col)
+            rgb = util.gamma_correction(shaded_col)
         else:
             rgb = shaded_col.clamp(min=0.0, max=1.0)
 
