@@ -8,6 +8,7 @@ from utils.general_utils import load_npy_tensors
 import os
 from pathlib import Path
 from tqdm import tqdm
+import torch.nn.functional as F
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
@@ -71,7 +72,7 @@ class Relightable3DGW:
         del embedding_network
         torch.cuda.empty_cache()
         # Initialize per-image embeddings
-        self.embeddings.weight = torch.nn.Parameter(embeddings_inits)
+        self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
 
 
     def training_set_up(self):
