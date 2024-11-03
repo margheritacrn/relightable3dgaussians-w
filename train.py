@@ -26,6 +26,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 import time
 from scene.NVDIFFREC import load_sh_env
 from scene.net_models import SHMlp, EmbeddingNet
+import torch.nn.functional as F
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
 #TODO: add regularization term for environment light SH coefficients: they must be positive
@@ -71,13 +72,18 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
                                                                 )
             data_transforms = output_embednet["data_transforms"]
         embedding_network.eval()
+        embeddings_inits = torch.zeros((len(viewpoint_stack), 32), dtype=torch.float32,  device='cuda')
         with torch.no_grad():
-            batch_imgs = torch.stack([data_transforms(viewpoint_cam.original_image) for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
-            embeddings_inits = embedding_network(batch_imgs)
+            batch_imgs_1 = torch.stack([data_transforms(viewpoint_cam.original_image) for viewpoint_cam in viewpoint_stack[:int(len(viewpoint_stack)/2)]]).to(dtype=torch.float32,  device='cuda')
+            embeddings_inits[:int(len(viewpoint_stack)/2)] = embedding_network(batch_imgs_1)
+            del batch_imgs_1
+            batch_imgs_2 = torch.stack([data_transforms(viewpoint_cam.original_image) for viewpoint_cam in viewpoint_stack[int(len(viewpoint_stack)/2):]]).to(dtype=torch.float32,  device='cuda')
+            embeddings_inits[int(len(viewpoint_stack)/2):] = embedding_network(batch_imgs_2)
+            del batch_imgs_2
         del embedding_network
         torch.cuda.empty_cache()
         # Initialize per-image embeddings
-        embeddings.weight = torch.nn.Parameter(embeddings_inits)
+        embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -120,14 +126,14 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations):
         viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
         gt_image = viewpoint_cam.original_image.cuda()
         gt_light_condition = viewpoint_cam.image_name[:-9]
-        init_light_condition = next((key for key in envlight_sh_inits if gt_light_condition in key), None)
+        #init_light_condition = next((key for key in envlight_sh_inits if gt_light_condition in key), None)
         """
         if init_light_condition is None:
             continue
         else:
         """
-        # gt_envlight_sh_init = envlight_sh_inits[init_light_condition]
-       #  gt_envlight_sh_init = torch.tensor(gt_envlight_sh_init, dtype=torch.float32, device="cuda")
+        #gt_envlight_sh_init = envlight_sh_inits[init_light_condition]
+        #gt_envlight_sh_init = torch.tensor(gt_envlight_sh_init, dtype=torch.float32, device="cuda")
 
         gaussians.set_requires_grad("normal", state=iteration >= opt.normal_reg_from_iter)
         gaussians.set_requires_grad("normal2", state=iteration >= opt.normal_reg_from_iter)
