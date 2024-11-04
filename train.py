@@ -11,7 +11,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_prior_loss
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui, render_lighting
 import sys
 from utils.general_utils import safe_state
@@ -43,6 +43,8 @@ except ImportError:
 def training(cfg, testing_iterations, saving_iterations):
     tb_writer = prepare_output_and_logger(cfg.dataset)
     model = Relightable3DGW(cfg)
+    if cfg.init_sh_mlp:
+        model.initialize_sh_mlp()
     model.training_set_up()
 
     bg_color = [1, 1, 1] if cfg.dataset.white_background else [0, 0, 0]
@@ -127,6 +129,10 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
             envl_init_loss = envlight_prior_loss(envlight_sh, gt_envlight_sh_prior)
             loss += cfg.optimizer.lambda_envlight_sh_prior * envl_init_loss
+        # Planar regularization
+        if cfg.optimizer.lambda_scale > 0:
+            scale_loss = min_scale_loss(radii, model.gaussians)
+            loss += cfg.optimizer.lambda_scale*scale_loss
         loss.backward()
 
         iter_end.record()
@@ -285,7 +291,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
-    overrides = [
+    cl_args = [
         f"dataset.eval={str(args.eval)}",
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
@@ -300,35 +306,8 @@ if __name__ == "__main__":
     # network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
-    sys.argv = [sys.argv[0]] + overrides
+    sys.argv = [sys.argv[0]] + cl_args
     main()
 
-"""
-if __name__ == "__main__":
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Training script parameters")
-    lp = ModelParams(parser)
-    op = OptimizationParams(parser)
-    pp = PipelineParams(parser)
-    parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=6009)
-    parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--quiet", action="store_true")
-    args = parser.parse_args(sys.argv[1:])
-    args.save_iterations.append(args.iterations)
-    
-    print("Optimizing " + args.model_path)
 
-    # Initialize system state (RNG)
-    safe_state(args.quiet)
 
-    # Start GUI server, configure and run training
-    # network_gui.init(args.ip, args.port)
-    torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations, args.save_iterations)
-
-    # All done
-    print("\nTraining complete.")
-"""

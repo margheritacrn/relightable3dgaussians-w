@@ -3,6 +3,7 @@ sh_degree: 3 #to be removed
 envlight_sh_degree: 4
 envlight_sh_prior_path: "/home/corona/data/nerfosr_test/schloss/train/envmaps_init"
 init_embeddings: True
+init_sh_mlp: True
 embeddings_dim: 32
 defaults:
   - optimizer: optimization_params.yaml
