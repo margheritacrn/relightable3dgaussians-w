@@ -15,7 +15,7 @@ import os
 import sys
 from tqdm import tqdm
 from os import makedirs
-from gaussian_renderer import render, render_lighting
+from gaussian_renderer import render
 import torchvision
 from utils.general_utils import safe_state
 from argparse import ArgumentParser
@@ -26,21 +26,18 @@ from utils.general_utils import get_minimum_axis
 from scene.NVDIFFREC.util import save_image_raw
 import numpy as np
 from omegaconf import DictConfig
+from scene.relit3DGW_model import Relightable3DGW
 import hydra
+#TODO: handle loading model at input iteration
 
 
-def render_lightings(model_path, name, iteration, gaussians, sample_num):
-    lighting_path = os.path.join(model_path, name, "ours_{}".format(iteration))
-    makedirs(lighting_path, exist_ok=True)    
-    # sampled_indicies = torch.randperm(gaussians.get_xyz.shape[0])[:sample_num]
-    sampled_indicies = torch.arange(gaussians.get_xyz.shape[0], dtype=torch.long)[:sample_num]
-    for sampled_index in tqdm(sampled_indicies, desc="Rendering lighting progress"):
-        lighting = render_lighting(gaussians, sampled_index=sampled_index)
-        torchvision.utils.save_image(lighting, os.path.join(lighting_path, '{0:05d}'.format(sampled_index) + ".png"))
-        save_image_raw(os.path.join(lighting_path, '{0:05d}'.format(sampled_index) + ".hdr"), lighting.permute(1,2,0).detach().cpu().numpy())
+def render_lightings(model_path, name, iteration, model):
+    lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration))
+    makedirs(lighting_path, exist_ok=True)
+    model.render_envlights_sh_all(path = lighting_path)
 
 
-def render_set(model_path, name, iteration, views, gaussians, pipeline, background):
+def render_set(model_path, name, iteration, views, model, pipeline, background):
     render_path = os.path.join(model_path, name, "ours_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "ours_{}".format(iteration), "gt")
 
@@ -50,17 +47,22 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         torch.cuda.synchronize()
 
-        render_pkg = render(view, gaussians, pipeline, background, debug=True)
+        view_id = torch.tensor([view.uid], device = 'cuda')
+        gt = view.original_image.cuda()
+        embedding_gt = model.embeddings(view_id)
+        envlight_sh = model.envlight_sh_mlp(embedding_gt)
+        model.envlight.set_base(envlight_sh)
+        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=True)
 
         torch.cuda.synchronize()
 
-        gt = view.original_image[0:3, :, :]
+        gt = gt[0:3, :, :]
         torchvision.utils.save_image(render_pkg["render"], os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
         for k in render_pkg.keys():
             if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm":
                 continue
-            save_path = os.path.join(model_path, name, "ours_{}".format(iteration), k)
+            save_path = os.path.join(model_path, name, "iteration_{}".format(iteration), k)
             makedirs(save_path, exist_ok=True)
             if k == "alpha":
                 render_pkg[k] = apply_depth_colormap(render_pkg["alpha"][0][...,None], min=0., max=1.).permute(2,0,1)
@@ -70,82 +72,51 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
                 render_pkg[k] = 0.5 + (0.5*render_pkg[k])
             torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, '{0:05d}'.format(idx) + ".png"))
 
-
-def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool):
+def render_sets(cfg, skip_train : bool, skip_test : bool, iteration: int):
     with torch.no_grad():
-        gaussians = GaussianModel(dataset.sh_degree, dataset.brdf_dim, pipeline.brdf_mode, dataset.brdf_envmap_res)
-        scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
+        model = Relightable3DGW(cfg, load_iteration = iteration)
+        #gaussians = GaussianModel(cfg.dataset.sh_degree)
+        #scene = Scene(cfg.dataset, gaussians, load_iteration=iteration, shuffle=False)
 
-        bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
+        bg_color = [1,1,1] if cfg.dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
         if not skip_train:
-             render_set(dataset.model_path, "train", scene.loaded_iter, scene.getTrainCameras(), gaussians, pipeline, background)
+             render_set(cfg.dataset.model_path, "train", model.scene.loaded_iter, model.scene.getTrainCameras(), model, cfg.pipe, background)
 
         if not skip_test:
-             render_set(dataset.model_path, "test", scene.loaded_iter, scene.getTestCameras(), gaussians, pipeline, background)
+             render_set(cfg.dataset.model_path, "test", model.scene.loaded_iter, model.scene.getTestCameras(), model, cfg.pipe, background)
 
-        if pipeline.brdf:
-             render_lightings(dataset.model_path, "lighting", scene.loaded_iter, gaussians, sample_num=1)
+        render_lightings(cfg.dataset.model_path, "rendered_envlights_sh", model)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
-    print("Optimizing " + cfg.dataset.model_path)
-    rendr_sets(cfg, cfg.skip_train, cfg.skip_test)
+    print("Rendering " + cfg.cfg.dataset.model_path)
+    render_sets(cfg, cfg.skip_train, cfg.skip_test, cfg.iteration)
     # All done
-    print("\nTraining complete.")
+    print("\nRendering complete.")
 
 
 if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Rendering script parameters")
-    parser.add_argument('--ip', type=str, default="127.0.0.1")
-    parser.add_argument('--port', type=int, default=6009)
-    parser.add_argument('--detect_anomaly', action='store_true', default=False)
-    parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--eval", action="store_true")
-    parser.add_argument("--source_path", type=str)
-    parser.add_argument("--model_path", type=str)
+    parser.add_argument("--iteration", default=-1, type=int)
+    parser.add_argument("--skip_train", action="store_true")
+    parser.add_argument("--skip_test", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
-        f"dataset.eval={str(args.eval)}",
-        f"dataset.model_path={args.model_path}",
-        f"dataset.source_path={args.source_path}",
-        f"+test_iterations={args.test_iterations}",
-        f"+save_iterations={args.save_iterations}",
+        f"+iteration={str(args.iteration)}",
+        f"+skip_train={args.skip_train}",
+        f"+skip_train={args.skip_test}"
     ]
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    # Start GUI server, configure and run training
-    # network_gui.init(args.ip, args.port)
-    torch.autograd.set_detect_anomaly(args.detect_anomaly)
-
     sys.argv = [sys.argv[0]] + cl_args
     main()
     # All done
-    print("\nTraining complete.")
-
-
-
-if __name__ == "__main__":
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Testing script parameters")
-    model = ModelParams(parser, sentinel=True)
-    pipeline = PipelineParams(parser)
-    parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--skip_train", action="store_true")
-    parser.add_argument("--skip_test", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
-    args = get_combined_args(parser)
-    print("Rendering " + args.model_path)
-
-    # Initialize system state (RNG)
-    safe_state(args.quiet)
-
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+    print("\nRendering complete.")

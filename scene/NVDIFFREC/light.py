@@ -14,7 +14,7 @@ import nvdiffrast.torch as dr
 from . import util
 from . import renderutils as ru
 from utils.general_utils import get_homogeneous
-from utils.sh_utils import gauss_weierstrass_kernel, eval_sh
+from utils.sh_utils import gauss_weierstrass_kernel, eval_sh, sh_render
 #NOTE: I also need to load envlights that don't need training, so I should have base attribute not directly initialized to LightNet object
 #TODO: add dimensionality control to load_env function
 #TODO: decide wehteher to use equrectangular or cubemap representation/texture for envmaps.
@@ -182,14 +182,20 @@ class EnvironmentLight(torch.nn.Module):
         return rgb, extras
     
 
-    def set_base(self, base: torch.Tensor):
+    def set_base(self, base: torch.Tensor, base_is_SH: bool = True):
         self.base = base.squeeze()
+        self.base_is_SH(base_is_SH)
 
 
-# Load and store envmaps (cubemap-SH representations)
-# NOTE: these functions are out of the EnvironmentLight class.
-def load_sh_env(envlight_sh: torch.Tensor):
-    return EnvironmentLight(envlight_sh, base_is_SH=True)
+    def render_sh(self, width: int = 600):
+        """Render light SH coefficients in equirectangular format"""
+        assert self.base_is_SH == True, "sh environment light base is required"
+        self.base = self.base.squeeze()
+        rendered_sh = sh_render(self.base, width = width)
+        rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
+        rendered_sh = rendered_sh.astype(np.uint8)
+        return rendered_sh
+
 
 
 def load_hdr_env(fn, scale=1.0):
@@ -200,13 +206,4 @@ def load_hdr_env(fn, scale=1.0):
     envlight_sh = get_SH_from_cubemap(cubemap)
     l = EnvironmentLight(envlight_sh, base_is_SH=True)
     return l
-
-
-def get_SH_from_cubemap(cubemap, sh_degree: int = 4):
-    pass
-
-
-def get_cubemap_fromSH(envlight_sh):
-    # use 
-    pass
 

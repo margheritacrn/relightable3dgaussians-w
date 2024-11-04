@@ -49,15 +49,6 @@ def render_normal(viewpoint_cam, depth, bg_color, alpha):
 
     return normal_ref
 
-# render 360 lighting for a single gaussian
-def render_lighting(pc : GaussianModel, resolution=(512, 1024), sampled_index=None):
-    if pc.brdf_mode=="envmap":
-        lighting = extract_env_map(pc.brdf_mlp, resolution) # (H, W, 3)
-        lighting = lighting.permute(2,0,1) # (3, H, W)
-    else:
-        raise NotImplementedError
-
-    return lighting
 
 def normalize_normal_inplace(normal, alpha):
     # normal: (3, H, W), alpha: (H, W)

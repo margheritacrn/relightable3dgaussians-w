@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import numpy as np
 from utils.system_utils import mkdir_p
 from torch.utils.data import TensorDataset, DataLoader
+from PIL import Image
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
@@ -28,7 +29,7 @@ class Relightable3DGW:
 
         self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
         self.envlight_sh_mlp.cuda()
-        if self.config.optimizer.lambda_envlight_sh_prior > 0:
+        if self.config.optimizer.lambda_envlight_sh_prior > 0 or self.config.init_sh_mlp:
             if os.path.exists(self.config.envlight_sh_prior_path):
                 self.envlight_sh_priors = load_npy_tensors(Path(self.config.envlight_sh_prior_path))
             else:
@@ -81,16 +82,17 @@ class Relightable3DGW:
         # Initialize per-image embeddings
         self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
 
-    def initialize_mlp(self):
+    def initialize_sh_mlp(self):
+        print("Initializing SH MLP")
         viewpoint_stack = self.scene.getTrainCameras().copy()
-        imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid], device = 'cuda')) for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
+        imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid], device = 'cuda')).detach() for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
         lighting_conditions = [viewpoint_cam.image_name[:-9] for viewpoint_cam in viewpoint_stack]
-        target_sh = torch.stack([self.envlight_sh_priors[lc] for lc in lighting_conditions])
+        sh_priors_keys = [next((key for key in self.envlight_sh_priors if lc in key), None) for lc in lighting_conditions]
+        target_sh = torch.stack([torch.tensor(self.envlight_sh_priors[key], dtype=torch.float32) for key in sh_priors_keys ])
         train_data = TensorDataset(imgs, target_sh)
-        batch_size = 64
+        batch_size = 32
         dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-        self.envlight_sh_mlp.initialize(dataloader, epochs = 100, optim=self.optimizer)
-        self.embeddings.requires_grad_ = True
+        self.envlight_sh_mlp.initialize(dataloader, epochs = 100)
 
 
     def training_set_up(self):
@@ -126,8 +128,17 @@ class Relightable3DGW:
                 image_embed = self.embeddings(viewpoint_cam_id)
                 envlights_sh[viewpoint_cam.image_name] = self.envlight_sh_mlp(image_embed).detach().cpu().numpy()
         return envlights_sh
-
     
+
+    def render_envlights_sh_all(self, save_path: str):
+        envlights_sh = self.get_envlights_sh_all()
+        for im_name in envlights_sh.keys():
+            self.envlight.set_base(envlights_sh[im_name])
+            rendered_sh = self.envlight.render_sh()
+            rendered_img = Image.fromarray(rendered_sh)
+            save_path = os.path.joint(save_path, im_name + ".jpg")
+            rendered_img.save(save_path)
+
 
     def save_config(self):
         config_path = os.path.join(self.config.dataset.model_path, "relightable3DG-W_run.yaml")
