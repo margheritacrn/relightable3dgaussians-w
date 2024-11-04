@@ -219,7 +219,7 @@ class SHMlp(nn.Module):
             self.train()
             for batch in dataloader:
                 optim.zero_grad() 
-                input = batch[0].cuda()
+                input = batch[0].squeeze().cuda()
                 sh_target = batch[1].cuda()
                 sh_out = self(input)
                 mse = loss_(sh_target, sh_out)
