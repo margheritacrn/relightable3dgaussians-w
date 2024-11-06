@@ -2,7 +2,7 @@ import torch
 from torch import Tensor, nn
 import numpy as np
 from tqdm import tqdm
-from data.dataloader import load_train_test
+from data.dataloader_net import load_train_test
 # TODO: is np.int32 necessary?
 # TODO: input resized to? 256? assume 3x256x256
 # TODO: consider whether to add another dense layer to the encoder
