@@ -19,7 +19,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view
+from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci
 import open3d as o3d
 # TODO: here I think that I don´t need the lightnet, because is per image not per Gaussian
 
@@ -97,8 +97,20 @@ class GaussianModel:
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+    
 
     def get_normal(self, dir_pp_normalized=None, return_delta=False):
+        normal_axis = self.get_minimum_axis
+        normal_axis = normal_axis
+        normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
+        normal = normal_axis/normal_axis.norm(dim=1, keepdim=True) # (N, 3)
+        if return_delta:
+            return normal, normal
+        else:
+            return normal
+
+
+    def get_normal_original(self, dir_pp_normalized=None, return_delta=False):
         normal_axis = self.get_minimum_axis
         normal_axis = normal_axis
         normal_axis, positive = flip_align_view(normal_axis, dir_pp_normalized)
@@ -167,8 +179,6 @@ class GaussianModel:
         #TODO: check here
         # self._albedo = nn.Parameter(features[:,:3].contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,3:].contiguous().requires_grad_(True))
-
-
         normals = np.zeros_like(np.asarray(pcd.points, dtype=np.float32))
         normals2 = np.copy(normals)
 
@@ -184,6 +194,68 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+
+    @torch.no_grad()
+    def get_sky_xyz(self, num_points: int, cameras):
+        """Adapted from https://arxiv.org/abs/2407.08447"""
+        points = get_uniform_points_on_sphere_fibonacci(num_points)
+        points = points.to("cuda")
+        mean = self._xyz.mean(0)[None]
+        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97) * 10
+        points = points * sky_distance
+        points = points + mean
+        gmask = torch.zeros((points.shape[0],), dtype=torch.bool, device=points.device)
+        for cam in cameras:
+            uv = cam.project(points[torch.logical_not(gmask)])
+            mask = torch.logical_not(torch.isnan(uv).any(-1))
+            # Only top 2/3 of the image
+            assert cam.image_width is not None and cam.image_height is not None
+            mask = torch.logical_and(mask, uv[..., -1] < 2/3 * cam.image_height)
+            gmask[torch.logical_not(gmask)] = torch.logical_or(gmask[torch.logical_not(gmask)], mask)
+
+        return points[gmask], sky_distance / 2
+
+
+    def extend_with_sky_gaussians(self, num_points: int, cameras):
+        sky_xyz, _ = self.get_sky_xyz(num_points, cameras)
+        print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
+
+        self._xyz = nn.Parameter(torch.cat([self._xyz, sky_xyz], dim=0).requires_grad_(True))
+
+        sky_albedo = 0.5*torch.ones((sky_xyz.shape[0], 3), device=self._albedo.device, requires_grad=True)
+        self._albedo = nn.Parameter(torch.cat([self._albedo, sky_albedo], dim=0))
+
+        sky_specular = torch.zeros((sky_xyz.shape[0], 3), device=self._specular.device, requires_grad=True)
+        self._specular = nn.Parameter(torch.cat([self._specular, sky_specular], dim=0))
+
+        sky_metalness = torch.zeros((sky_xyz.shape[0], 1), device=self._metalness.device, requires_grad=True)
+        self._metalness = nn.Parameter(torch.cat([self._metalness, sky_metalness], dim=0))
+
+        sky_roughness = torch.zeros((sky_xyz.shape[0], 1), device=self._roughness.device, requires_grad=True)
+        self._roughness = nn.Parameter(torch.cat([self._roughness, sky_roughness], dim=0))
+
+        sky_normals = torch.from_numpy(np.zeros((sky_xyz.shape[0], 3), dtype=np.float32)).to(self._normal.device).requires_grad_(True)
+        self._normal = nn.Parameter(torch.cat([self._normal, sky_normals], dim=0))
+
+        sky_normals2 = torch.zeros_like(sky_normals)
+        self._normal2 = nn.Parameter(torch.cat([self._normal2, sky_normals2], dim=0))
+
+        sky_opacity = torch.ones((sky_xyz.shape[0], 1), device=self._opacity.device, requires_grad=True)
+        self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
+
+        dist2 = torch.clamp_min(distCUDA2(sky_xyz.float().cuda()), 0.0000001)
+        sky_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        sky_rots = torch.zeros((sky_xyz.shape[0], 4), device=self._rotation.device)
+        sky_rots[:, 0] = 1
+        self._rotation = nn.Parameter(torch.cat([self._rotation, sky_rots.requires_grad_(True)], dim=0))
+        self._scaling = nn.Parameter(torch.cat([self._scaling, sky_scales.requires_grad_(True)]))
+        sky_max_radii2D = torch.zeros((sky_xyz.shape[0]), device=self.max_radii2D.device)
+        self.max_radii2D = nn.Parameter(torch.cat([self.max_radii2D, sky_max_radii2D]))
+
+        #TODO: remove feature_rest
+        sky_f_rest = torch.zeros((sky_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
+        self._features_rest = nn.Parameter(torch.cat([self._features_rest, sky_f_rest]))
 
 
     def training_setup(self, envlight, embeddings, training_args):
