@@ -23,7 +23,7 @@ roughness_lr: 0.0002
 metalness_lr: 0.0002
 albedo_lr: 0.0002
 normal_reg_from_iter: 0
-normal_reg_util_iter: 30_000
+normal_reg_util_iter: 0 #30_000
 lambda_zero_one: 0 # 1e-3
 lambda_predicted_normal: 2e-1
 lambda_delta_reg: 1e-3

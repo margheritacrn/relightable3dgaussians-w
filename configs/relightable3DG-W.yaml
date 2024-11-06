@@ -5,6 +5,7 @@ envlight_sh_prior_path: "/home/corona/data/nerfosr_test/schloss/train/envmaps_in
 init_embeddings: True
 init_sh_mlp: True
 embeddings_dim: 32
+num_sky_points: 0 #50000
 defaults:
   - optimizer: optimization_params.yaml
   - pipe: pipeline_params.yaml
