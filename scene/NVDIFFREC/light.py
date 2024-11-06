@@ -184,7 +184,7 @@ class EnvironmentLight(torch.nn.Module):
 
     def set_base(self, base: torch.Tensor, base_is_SH: bool = True):
         self.base = base.squeeze()
-        self.base_is_SH(base_is_SH)
+        self.base_is_SH = base_is_SH
 
 
     def render_sh(self, width: int = 600):
