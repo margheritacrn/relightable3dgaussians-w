@@ -24,8 +24,10 @@ class Relightable3DGW:
         self.iteration: int = 0
 
         self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
-
         self.scene:  Scene = Scene(self.config.dataset, self.gaussians)
+        self.train_cameras = self.scene.getTrainCameras().copy()
+        if self.config.num_sky_points > 0:
+            self.gaussians.extend_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
 
         self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
         self.envlight_sh_mlp.cuda()
@@ -37,7 +39,7 @@ class Relightable3DGW:
         
         self.envlight = EnvironmentLight(base = torch.empty(((self.config.envlight_sh_degree +1)**2), 3),
                                          sh_degree=self.config.envlight_sh_degree)
-        self.embeddings = torch.nn.Embedding(len(self.scene.train_cameras[1.0]),
+        self.embeddings = torch.nn.Embedding(len(self.train_cameras),
                                              self.config.embeddings_dim)
         self.embeddings.cuda()
         if self.config.init_embeddings:
