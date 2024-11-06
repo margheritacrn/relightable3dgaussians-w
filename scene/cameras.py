@@ -18,7 +18,7 @@ class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", 
-                 normal_image=None,
+                 normal_image=None, cx=None, cy=None, image_w=None, image_h=None
                  ):
         super(Camera, self).__init__()
 
@@ -28,7 +28,11 @@ class Camera(nn.Module):
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
+        self.cx = cx 
+        self.cy = cy
         self.image_name = image_name
+        self.image_width = image_w
+        self.image_height = image_h
 
         try:
             self.data_device = torch.device(data_device)
@@ -83,6 +87,23 @@ class Camera(nn.Module):
 
         viewdirs = get_rays(self.image_width, self.image_height, intrinsic_matrix, extrinsic_matrix[:3,:3])
         return viewdirs
+
+    def project(self, xyz: torch.Tensor):
+        """Project point in world coordinate system onto camera coordinates"""
+        eps = torch.finfo(xyz.dtype).eps
+        assert xyz.shape[-1] == 3
+        # Translate and rotate
+        T = torch.tensor(self.T, dtype=torch.float32, device='cuda')
+        R = torch.tensor(self.R, dtype=torch.float32, device='cuda')
+        uvw = xyz - T
+        uvw = (R*uvw[...,:,None]).sum(-2)
+        # Camera -> Camera distorted
+        uv = torch.where(uvw[..., 2:] > eps, uvw[..., :2] / uvw[..., 2:], torch.zeros_like(uvw[..., :2]))
+        x, y = torch.moveaxis(uv, -1, 0)
+        # Camera distorted --> image
+        x = self.FoVx*x + self.cx
+        y = self.FoVy*y + self.cy
+        return torch.stack((x,y), -1)
 
 class MiniCam:
     def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform):
