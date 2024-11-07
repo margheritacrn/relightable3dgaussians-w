@@ -5,6 +5,7 @@ from omegaconf import OmegaConf, DictConfig
 import hydra
 from scene import GaussianModel, Scene
 from utils.general_utils import load_npy_tensors
+from utils.system_utils import searchForMaxIteration
 import os
 from pathlib import Path
 from tqdm import tqdm
@@ -13,44 +14,65 @@ import numpy as np
 from utils.system_utils import mkdir_p
 from torch.utils.data import TensorDataset, DataLoader
 from PIL import Image
-
+#TODO: consider weather to refactor the class structre such that all the attributes are passed from the training script. This way I could properly initialize the output.
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
 class Relightable3DGW:
-    def __init__(self,  config: DictConfig, checkpoint: str = None):
-        self.config = config # OmegaConf.structured(OmegaConf.to_yaml(config))
-        self.checkpoint = checkpoint
+    def __init__(self,  config: DictConfig, load_iteration: int = None):
+        self.config = config
         self.optimizer: torch.optim = None
-        self.iteration: int = 0
-
-        self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
-        self.scene:  Scene = Scene(self.config.dataset, self.gaussians)
-        self.train_cameras = self.scene.getTrainCameras().copy()
-        if self.config.num_sky_points > 0:
-            self.gaussians.extend_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
-
-        self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
-        self.envlight_sh_mlp.cuda()
-        if self.config.optimizer.lambda_envlight_sh_prior > 0 or self.config.init_sh_mlp:
-            if os.path.exists(self.config.envlight_sh_prior_path):
-                self.envlight_sh_priors = load_npy_tensors(Path(self.config.envlight_sh_prior_path))
+        if load_iteration:
+            outputs_paths = ["point_cloud", "checkpoint_embeddings", "checkpoint_SHMlp", "envlights_sh"]
+            if load_iteration == -1:
+                outputs_paths = ["point_cloud", "checkpoint_embeddings", "checkpoint_SHMlp", "envlights_sh"]
+                load_iters = [searchForMaxIteration(os.path.join(self.config.model_path, op)) for op in outputs_paths]
+                assert len(set(load_iters)) == 1, f"Load iteration- incongruous of saved iterations"
+                self.load_iteration = load_iters[0]
             else:
-                raise ValueError('Path for environment light sh priors not found')
+                for op in outputs_paths:
+                    assert os.path.exists(os.path.join(self.config.model_path, op+"/iteration_{load_iteration}")), f"Load iteration {load_iteration}- output path missing"
+                    self.load_iteration = load_iteration
+            self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
+            self.scene:  Scene = Scene(self.config.dataset, self.gaussians, load_iteration=self.load_iteration)
+            self.train_cameras = self.scene.getTrainCameras().copy()
+            if self.config.dataset.eval:
+                self.test_cameras = self.scene.getTestCameras().copy()
+            self.load_model(load_iteration=self.load_iteration)
+        else:
+            self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
+            self.scene:  Scene = Scene(self.config.dataset, self.gaussians)
+            self.train_cameras = self.scene.getTrainCameras().copy()
+            if self.config.dataset.eval:
+                self.test_cameras = self.scene.getTestCameras().copy()
+            if self.config.num_sky_points > 0:
+                self.gaussians.extend_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
+
+            self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
+            self.envlight_sh_mlp.cuda()
+            if self.config.optimizer.lambda_envlight_sh_prior > 0 or self.config.init_sh_mlp:
+                if os.path.exists(self.config.envlight_sh_prior_path):
+                    self.envlight_sh_priors = load_npy_tensors(Path(self.config.envlight_sh_prior_path))
+                else:
+                    raise ValueError('Path for environment light sh priors not found')
+            
+            self.embeddings = torch.nn.Embedding(len(self.train_cameras),
+                                                self.config.embeddings_dim)
+            self.embeddings.cuda()
+            if self.config.init_embeddings:
+                self.initialize_embeddings()
         
         self.envlight = EnvironmentLight(base = torch.empty(((self.config.envlight_sh_degree +1)**2), 3),
-                                         sh_degree=self.config.envlight_sh_degree)
-        self.embeddings = torch.nn.Embedding(len(self.train_cameras),
-                                             self.config.embeddings_dim)
-        self.embeddings.cuda()
-        if self.config.init_embeddings:
-            self.initialize_embeddings()
+                                            sh_degree=self.config.envlight_sh_degree)
 
         self.save_config()
 
 
-    def initialize_embeddings(self):
+    def initialize_embeddings(self, eval=False):
         embednet_pretrain_epochs = self.config.optimizer.embednet_pretrain_epochs
-        viewpoint_stack = self.scene.getTrainCameras().copy()
+        if eval:
+            viewpoint_stack = self.train_cameras
+        else:
+            viewpoint_stack = self.test_cameras
         embedding_network = EmbeddingNet(latent_dim=self.config.embeddings_dim)
         embedding_network.cuda()
         checkpoint = self.config.dataset.model_path + f'/EmbeddingNet_model_epoch_{embednet_pretrain_epochs-1}.pth'
@@ -83,6 +105,7 @@ class Relightable3DGW:
         torch.cuda.empty_cache()
         # Initialize per-image embeddings
         self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
+
 
     def initialize_sh_mlp(self):
         print("Initializing SH MLP")
@@ -172,9 +195,26 @@ class Relightable3DGW:
         self.scene.save(iteration)
 
 
-    def load_model(self, iteration: int):
-        pass
-            
+    def load_model(self, load_iteration: int):
+        """Load model at iteration load_iteration. Gaussians are loaded when initializing self.scene"""
+        checkpoint_embeddings = os.path.join(self.config.dataset.model_path, f"checkpoint_embeddings/iteration_{load_iteration}/embeddings_weights.pth")
+        checkpoint_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_SHMlp/iteration_{load_iteration}/SHMlp_weights.pth")
+        assert os.path.exists(checkpoint_embeddings) and os.path.exists(checkpoint_sh_mlp), f"Loading model at iter {load_iteration}- checkpoint paths not found"
+                                         
+        state_dict_embeds = torch.load(checkpoint_embeddings, weights_only=True)
+        self.embeddings = torch.nn.Embedding(len(self.train_cameras, self.config.embeddings_dim))
+        self.embeddings.load_state_dict(state_dict_embeds)
+
+        state_dict_sh_mlp = torch.load(checkpoint_sh_mlp, weights_only=True)
+        self.envlight_sh_mlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
+        self.envlight_sh_mlp.load_state_dict(state_dict_sh_mlp)
+
+
+    def eval(self):
+        "Perform evaluation on test set"
+        # optimize embeddings for test set after initialization, optimize on half of the images
+
+        # compute metrics on other half of the image
 
 
 
