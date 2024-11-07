@@ -20,7 +20,6 @@ from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
 import torch
 from utils.system_utils import mkdir_p
-# from scene.NVDIFFREC import save_env_map, load_env
 
 
 class Scene:
@@ -45,10 +44,10 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if os.path.exists(os.path.join(args._source_path, "kai_cameras.json")):
+        if os.path.exists(os.path.join(args.source_path, "kai_cameras.json")):
            cams_file = "kai_cameras.json"
            scene_info = sceneLoadTypeCallbacks["NerfOSR"](args.source_path, cams_file, args.eval)
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
@@ -89,14 +88,6 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"),
                                               og_number_points=len(scene_info.point_cloud.points))
-            
-            if self.gaussians.brdf:  #TODO: edit here with light_env
-                fn = os.path.join(self.model_path,
-                                "brdf_mlp",
-                                "iteration_" + str(self.loaded_iter),
-                                "brdf_mlp.hdr")
-                self.gaussians.brdf_mlp = load_env(fn, scale=1.0)
-                print(f"Load envmap from: {fn}")
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 
@@ -104,7 +95,6 @@ class Scene:
     def save(self, iteration): #TODO: edit here
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))
         self.gaussians.save_ply(os.path.join(point_cloud_path, "point_cloud.ply"))
-
 
     def getTrainCameras(self, scale=1.0):
         return self.train_cameras[scale]

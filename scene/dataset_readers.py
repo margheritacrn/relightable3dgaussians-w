@@ -138,14 +138,14 @@ def storePly(path, xyz, rgb):
     ply_data.write(path)
 
 def readNerfOSRCameras(path, cams_fname):
-    assert cams_fname[:-3] == 'json', "NeRF-OSR- camera parameters must be stored in .json file"
+    assert cams_fname[-4:] == 'json', "NeRF-OSR- camera parameters must be stored in .json file"
     cam_infos = []
     with open(os.path.join(path, cams_fname)) as json_file:
         contents = json.load(json_file)
+        sys.stdout.write("Reading {} cameras".format(len(contents)))
+        sys.stdout.flush()
         for idx, im_name in enumerate(contents.keys()):
-            sys.stdout.write("Reading camera {}/{}".format(idx+1, len(contents)))
-            sys.stdout.flush()
-            image_path = os.path.join(path, im_name)
+            image_path = os.path.join(path, f"rgb/{im_name}")
             # read intrinsics
             width = contents[im_name]['img_size'][0]
             height = contents[im_name]['img_size'][1]
@@ -160,7 +160,7 @@ def readNerfOSRCameras(path, cams_fname):
             w2c = np.array(contents[im_name]['W2C']).reshape(4,4)
             R = w2c[:3,:3]
             T = w2c[:3, 3]
-            image_name = os.path.basename(path).split(".")[0]
+            image_name = os.path.basename(image_path).split(".")[0]
             image = Image.open(image_path)
 
             cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, cx = cx, cy=cy, image=image,
@@ -183,14 +183,16 @@ def readNerfOsrInfo(path, cams_fname, eval, extension = ".JPG"):
         test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
-    try: 
-        ply_path = os.path.join(path, "sparse/0/points3D.ply")
-        bin_path = os.path.join(path, "sparse/0/points3D.bin")
-        txt_path = os.path.join(path, "sparse/0/points3D.txt")
-    except:
+    try:
         ply_path = os.path.join(path, "points3D.ply")
         bin_path = os.path.join(path, "points3D.bin")
         txt_path = os.path.join(path, "points3D.txt")
+
+    except:
+        ply_path = os.path.join(path, "sparse/0/points3D.ply")
+        bin_path = os.path.join(path, "sparse/0/points3D.bin")
+        txt_path = os.path.join(path, "sparse/0/points3D.txt")
+
     if not os.path.exists(ply_path):
         print("Converting point3d.bin to .ply, will happen only the first time you open the scene.")
         try:
