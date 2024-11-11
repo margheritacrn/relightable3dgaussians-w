@@ -18,6 +18,7 @@ import os
 import glob
 from pathlib import Path
 import math
+from torch.utils.data import TensorDataset
 
 
 def inverse_sigmoid(x):
@@ -234,3 +235,18 @@ def load_npy_tensors(path: Path):
         npy_tensors[str(npy_tensor_fname)] = npy_tensor
 
     return npy_tensors
+
+def get_half_images(img: torch.tensor, left: bool = True):
+    """The function return a TesnorDatset containing the specified vertical halfs of the input.
+    Args:
+        img (torch.tensor): batch of images of shape (..., 3, H, W)
+        left(bool): if True returns left vertical half
+    Returns:
+        left/right_img_half (torch.tensor): imgs half cropped
+    """
+    if left: 
+        left_half_images = img[..., :, :img.shape[2] // 2]
+        return left_half_images
+    else:
+        right_half_images = img[..., :, img.shape[2] // 2:]
+        return right_half_images

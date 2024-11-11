@@ -27,6 +27,7 @@ import cv2
 import utils.spherical_harmonics as  sh
 import utils.sh_additional_utils as utility
 import imageio.v3 as im
+import math
 
 # coefficients to evaluate Y_lm(phi,theta) using cartesian coordinates, with l>=0 and -l<=m<=l (l in N, m in Z)
 
