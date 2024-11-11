@@ -390,17 +390,13 @@ class GaussianModel:
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         if not viewer_fmt:
-            attributes = np.concatenate((xyz, normals, normals2, albedo, opacities, scale, rotation, roughness, metalness, specular), axis=1)
+            attributes = np.concatenate((xyz, normals, albedo, normals2, opacities, scale, rotation, roughness, metalness, specular), axis=1)
         else:
             attributes = np.concatenate((xyz, normals, albedo, opacities, scale, rotation, roughness, metalness, specular), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-        pcd_o3d = o3d.geometry.PointCloud()
-        pcd_o3d.points = o3d.utility.Vector3dVector(xyz)
-        pcd_o3d.colors = o3d.utility.Vector3dVector(albedo)
-        return pcd_o3d
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
