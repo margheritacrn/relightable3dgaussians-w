@@ -12,32 +12,38 @@ from tqdm import tqdm
 import torch.nn.functional as F
 import numpy as np
 from utils.system_utils import mkdir_p
+from utils.general_utils import get_half_images
 from torch.utils.data import TensorDataset, DataLoader
+from gaussian_renderer import render
+from utils.loss_utils import l1_loss, ssim
 from PIL import Image
+from random import randint
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 #TODO: consider weather to refactor the class structre such that all the attributes are passed from the training script. This way I could properly initialize the output.
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
 class Relightable3DGW:
-    def __init__(self,  config: DictConfig, load_iteration: int = None):
+    def __init__(self,  config: DictConfig):
         self.config = config
+        self.load_iteration = self.config.load_iteration
         self.optimizer: torch.optim = None
-        if load_iteration:
+        if self.load_iteration != 'None':
             outputs_paths = ["point_cloud", "checkpoint_embeddings", "checkpoint_SHMlp", "envlights_sh"]
-            if load_iteration == -1:
+            if self.load_iteration == -1:
                 outputs_paths = ["point_cloud", "checkpoint_embeddings", "checkpoint_SHMlp", "envlights_sh"]
-                load_iters = [searchForMaxIteration(os.path.join(self.config.model_path, op)) for op in outputs_paths]
+                load_iters = [searchForMaxIteration(os.path.join(self.config.dataset.model_path, op)) for op in outputs_paths]
                 assert len(set(load_iters)) == 1, f"Load iteration- incongruous of saved iterations"
                 self.load_iteration = load_iters[0]
             else:
                 for op in outputs_paths:
-                    assert os.path.exists(os.path.join(self.config.model_path, op+"/iteration_{load_iteration}")), f"Load iteration {load_iteration}- output path missing"
-                    self.load_iteration = load_iteration
+                    assert os.path.exists(os.path.join(self.config.dataset.model_path, op+f"/iteration_{self.load_iteration}")), f"Load iteration {self.load_iteration}- output path missing"
+                    self.load_iteration = self.load_iteration
             self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
             self.scene:  Scene = Scene(self.config.dataset, self.gaussians, load_iteration=self.load_iteration)
             self.train_cameras = self.scene.getTrainCameras().copy()
             if self.config.dataset.eval:
                 self.test_cameras = self.scene.getTestCameras().copy()
-            self.load_model(load_iteration=self.load_iteration)
+            self.load_model()
         else:
             self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
             self.scene:  Scene = Scene(self.config.dataset, self.gaussians)
@@ -63,15 +69,15 @@ class Relightable3DGW:
         
         self.envlight = EnvironmentLight(base = torch.empty(((self.config.envlight_sh_degree +1)**2), 3),
                                             sh_degree=self.config.envlight_sh_degree)
+        self.embeddings_test = None
 
         self.save_config()
 
 
-    def initialize_embeddings(self, eval=False):
+    def initialize_embeddings(self, test = False):
         embednet_pretrain_epochs = self.config.optimizer.embednet_pretrain_epochs
-        if eval:
-            viewpoint_stack = self.train_cameras
-        else:
+        viewpoint_stack = self.train_cameras
+        if test:
             viewpoint_stack = self.test_cameras
         embedding_network = EmbeddingNet(latent_dim=self.config.embeddings_dim)
         embedding_network.cuda()
@@ -104,13 +110,16 @@ class Relightable3DGW:
         del embedding_network
         torch.cuda.empty_cache()
         # Initialize per-image embeddings
-        self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
+        if test:
+            self.embeddings_test.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
+        else:
+            self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
 
 
     def initialize_sh_mlp(self):
         print("Initializing SH MLP")
         viewpoint_stack = self.scene.getTrainCameras().copy()
-        imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid], device = 'cuda')).detach() for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
+        imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid]).to(dtype=torch.long, device='cuda')).detach() for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
         lighting_conditions = [viewpoint_cam.image_name[:-9] for viewpoint_cam in viewpoint_stack]
         sh_priors_keys = [next((key for key in self.envlight_sh_priors if lc in key), None) for lc in lighting_conditions]
         target_sh = torch.stack([torch.tensor(self.envlight_sh_priors[key], dtype=torch.float32) for key in sh_priors_keys ])
@@ -161,8 +170,8 @@ class Relightable3DGW:
             self.envlight.set_base(envlights_sh[im_name])
             rendered_sh = self.envlight.render_sh()
             rendered_img = Image.fromarray(rendered_sh)
-            save_path = os.path.joint(save_path, im_name + ".jpg")
-            rendered_img.save(save_path)
+            save_path_im = os.path.join(save_path, im_name + ".jpg")
+            rendered_img.save(save_path_im)
 
 
     def save_config(self):
@@ -186,7 +195,6 @@ class Relightable3DGW:
         torch.save(self.embeddings.weight, embeds_path + "/embeddings_weights.pth")
         print("Saving SH MLP weights\n")
         torch.save(self.envlight_sh_mlp.state_dict(), sh_mlp_path +  "/SHMlp_weights.pth")
-        torch.save
         print("Saving envlights SH coefficients\n")
         envlights_sh = self.get_envlights_sh_all()
         for envlight_sh in envlights_sh.keys():
@@ -195,28 +203,64 @@ class Relightable3DGW:
         self.scene.save(iteration)
 
 
-    def load_model(self, load_iteration: int):
-        """Load model at iteration load_iteration. Gaussians are loaded when initializing self.scene"""
-        checkpoint_embeddings = os.path.join(self.config.dataset.model_path, f"checkpoint_embeddings/iteration_{load_iteration}/embeddings_weights.pth")
-        checkpoint_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_SHMlp/iteration_{load_iteration}/SHMlp_weights.pth")
-        assert os.path.exists(checkpoint_embeddings) and os.path.exists(checkpoint_sh_mlp), f"Loading model at iter {load_iteration}- checkpoint paths not found"
+    def load_model(self):
+        """Load model at iteration self.load_iteration. Gaussians are loaded when initializing self.scene"""
+        checkpoint_ply = os.path.join(self.config.dataset.model_path, f"point_cloud/iteration_{self.load_iteration}/point_cloud.ply")
+        checkpoint_embeddings = os.path.join(self.config.dataset.model_path, f"checkpoint_embeddings/iteration_{self.load_iteration}/embeddings_weights.pth")
+        checkpoint_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_SHMlp/iteration_{self.load_iteration}/SHMlp_weights.pth")
+        assert os.path.exists(checkpoint_ply) , f"Loading model at iter {self.load_iteration}- point cloud checkpoint path not found"
+        assert  os.path.exists(checkpoint_embeddings), f"Loading model at iter {self.load_iteration}- embeddings checkpoint path not found"
+        assert  os.path.exists(checkpoint_sh_mlp), f"Loading model at iter {self.load_iteration}- SH MLP checkpoint path not found" 
+
+        self.gaussians.load_ply(checkpoint_ply)
                                          
-        state_dict_embeds = torch.load(checkpoint_embeddings, weights_only=True)
-        self.embeddings = torch.nn.Embedding(len(self.train_cameras, self.config.embeddings_dim))
-        self.embeddings.load_state_dict(state_dict_embeds)
+        embeds = torch.load(checkpoint_embeddings, weights_only=True)
+        self.embeddings = torch.nn.Embedding(len(self.train_cameras), self.config.embeddings_dim)
+        self.embeddings.weight = embeds
+        self.embeddings.cuda()
 
         state_dict_sh_mlp = torch.load(checkpoint_sh_mlp, weights_only=True)
         self.envlight_sh_mlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
         self.envlight_sh_mlp.load_state_dict(state_dict_sh_mlp)
+        if self.config.dataset.eval:
+            self.envlight_sh_mlp.eval()
+        self.envlight_sh_mlp.cuda()
 
 
-    def eval(self):
-        "Perform evaluation on test set"
-        # optimize embeddings for test set after initialization, optimize on half of the images
-
-        # compute metrics on other half of the image
-
-
-
-
-
+    def optimize_embeddings_test(self, mse=True):
+        "Optimization of the images embeddings for the test set. Optimization is performed on left half of the test images."
+        print(f"Optimizing test images embeddings on the left half of each image")
+        # Initialize test embeddings:
+        self.embeddings_test = torch.nn.Embedding(len(self.test_cameras),
+                                                self.config.embeddings_dim)
+        self.embeddings_test.cuda()
+        optimizer = torch.optim.Adam(self.embeddings_test.parameters(), lr=self.config.optimizer.embeddings_lr)
+        self.initialize_embeddings(test=True)
+        viewpoint_stack = self.scene.getTestCameras().copy()
+        background = torch.tensor([0,0,0], dtype=torch.float32, device="cuda")
+        mse_loss = torch.nn.MSELoss()
+        # test_imgs = torch.stack([torch.tensor([viewpoint_cam.original_image]).to(dtype=torch.float32, device='cuda') for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
+        with torch.enable_grad():
+            for _ in tqdm(range(self.config.optimizer.optim_embeddings_test_iters), desc = "Test images embeds optimization"):
+                if not viewpoint_stack:
+                    viewpoint_stack = self.scene.getTestCameras().copy()
+                viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
+                viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
+                gt_image = viewpoint_cam.original_image.cuda()
+                gt_image_half =  get_half_images(img = gt_image, left = True)
+                # Update width:
+                viewpoint_cam.image_width = viewpoint_cam.image_width // 2
+                embedding_gt_image_half = self.embeddings_test(viewpoint_cam_id)
+                envlight_sh = self.envlight_sh_mlp(embedding_gt_image_half)
+                self.envlight.set_base(envlight_sh)
+                render_pkg = render(viewpoint_cam, self.gaussians, self.envlight, self.config.pipe, background, debug=False)
+                viewpoint_cam.image_width = viewpoint_cam.image_width*2
+                image_half = render_pkg["render"]
+                if mse:
+                    loss = mse_loss(image_half, gt_image_half)
+                else:
+                    Ll1 = l1_loss(image_half, gt_image_half)
+                    loss = (1.0 - self.config.optimizer.lambda_dssim) * Ll1 + self.config.optimizer.lambda_dssim * (1.0 - ssim(image_half, gt_image_half))
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad(set_to_none = True)
