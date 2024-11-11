@@ -29,4 +29,5 @@ dependencies:
     - plyfile
     - opencv-python
     - ninja
-    - tensorboard 
+    - tensorboard
+    - lpips==0.1.4
