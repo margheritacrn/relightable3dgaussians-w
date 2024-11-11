@@ -15,7 +15,7 @@ from PIL import Image
 from typing import NamedTuple
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
-from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
+from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal, getView2World
 import numpy as np
 import json
 from pathlib import Path
@@ -137,6 +137,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
+
 def readNerfOSRCameras(path, cams_fname):
     assert cams_fname[-4:] == 'json', "NeRF-OSR- camera parameters must be stored in .json file"
     cam_infos = []
@@ -158,8 +159,9 @@ def readNerfOSRCameras(path, cams_fname):
             FovX = focal2fov(focal_length_x, width)
             # read extrinsics
             w2c = np.array(contents[im_name]['W2C']).reshape(4,4)
-            R = w2c[:3,:3]
-            T = w2c[:3, 3]
+            c2w = getView2World(w2c[:3,:3], w2c[:3, 3])
+            R = c2w[:3,:3].transpose()
+            T = c2w[:3, 3]
             image_name = os.path.basename(image_path).split(".")[0]
             image = Image.open(image_path)
 
@@ -170,23 +172,42 @@ def readNerfOSRCameras(path, cams_fname):
     sys.stdout.write('\n')
     return cam_infos   
 
-def readNerfOsrInfo(path, cams_fname, eval, extension = ".JPG"):
-    cam_infos = readNerfOSRCameras(path, cams_fname)
+#TODO: fix here and fix probelm of the different extension
+def readNerfOsrInfo(path, images, eval, extension = ".jpg"):
+    # cam_infos = readNerfOSRCameras(path, cams_fname)
+    try:
+        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
+        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
+        cam_extrinsics = read_extrinsics_binary(cameras_extrinsic_file)
+        cam_intrinsics = read_intrinsics_binary(cameras_intrinsic_file)
+    except:
+        cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.txt")
+        cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.txt")
+        cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
+        cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
+
+    reading_dir = "images" if images == None else images
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+
     train_images = os.listdir(path + "/train/rgb")
     test_images = os.listdir(path + "/test/rgb")
 
     if eval:
-        train_cam_infos = [c for c in cam_infos if c.image_name + extension in train_images]
-        test_cam_infos = [c for c in cam_infos if c.image_name + extension in test_images]
+        train_cam_infos_unsorted = [c for c in cam_infos if c.image_name + extension in train_images]
+        test_cam_infos_unsorted = [c for c in cam_infos if c.image_name + ".JPG"in test_images]
     else:
-        train_cam_infos = cam_infos
+        train_cam_infos_unsorted = cam_infos
         test_cam_infos = []
+    
+    train_cam_infos = sorted(train_cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+    test_cam_infos = sorted(test_cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
     try:
-        ply_path = os.path.join(path, "points3D.ply")
-        bin_path = os.path.join(path, "points3D.bin")
-        txt_path = os.path.join(path, "points3D.txt")
+        ply_path = os.path.join(path, "sparse/0/points3D.ply")
+        bin_path = os.path.join(path, "sparse/0/points3D.bin")
+        txt_path = os.path.join(path, "sparse/0/points3D.txt")
 
     except:
         ply_path = os.path.join(path, "sparse/0/points3D.ply")

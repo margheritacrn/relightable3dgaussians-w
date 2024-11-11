@@ -44,9 +44,10 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if os.path.exists(os.path.join(args.source_path, "kai_cameras.json")):
+        #TODO: fix here
+        if os.path.exists(os.path.join(args.source_path, "sparse")) or os.path.exists(os.path.join(args.source_path, "kai_cameras.json")):
            cams_file = "kai_cameras.json"
-           scene_info = sceneLoadTypeCallbacks["NerfOSR"](args.source_path, cams_file, args.eval)
+           scene_info = sceneLoadTypeCallbacks["NerfOSR"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
