@@ -9,10 +9,12 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 import os
+import torch.nn.functional as F
 import torch
+from torchvision import transforms
 from random import randint
 from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_prior_loss, min_scale_loss
-from gaussian_renderer import render, network_gui, render_lighting
+from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state
 from utils.image_utils import apply_depth_colormap
@@ -24,6 +26,7 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 from scene.relit3DGW_model import Relightable3DGW
 from scene.net_models import SHMlp, EmbeddingNet
 from omegaconf import DictConfig
+from render import render_sets_training
 import hydra
 #TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
 #NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
@@ -109,9 +112,9 @@ def training(cfg, testing_iterations, saving_iterations):
             if iteration < cfg.optimizer.normal_reg_util_iter:
                 losses_extra['predicted_normal'] = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"])
             losses_extra['zero_one'] = zero_one_loss(render_pkg["alpha"])
-            if "delta_normal_norm" not in render_pkg.keys() and cfg.optimizer.lambda_delta_reg>0: assert()
-            if "delta_normal_norm" in render_pkg.keys():
-                losses_extra['delta_reg'] = delta_normal_loss(render_pkg["delta_normal_norm"], render_pkg["alpha"])
+            # if "delta_normal_norm" not in render_pkg.keys() and cfg.optimizer.lambda_delta_reg>0: assert()
+            # if "delta_normal_norm" in render_pkg.keys():
+              #  losses_extra['delta_reg'] = delta_normal_loss(render_pkg["delta_normal_norm"], render_pkg["alpha"])
 
         # Loss
         Ll1 = l1_loss(image, gt_image)
@@ -172,6 +175,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
             # Optimizer step: for both gaussians parameters and envlight MLP (per-image)
             if iteration < cfg.optimizer.iterations:
+                # torch.nn.utils.clip_grad_norm_(model.optimizer.param_groups[0]['params'], 1.0)
                 model.optimizer.step()
                 model.optimizer.zero_grad(set_to_none = True)
                 model.update_learning_rate(iteration)
@@ -221,15 +225,25 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                     gts = torch.tensor([], device="cuda")
                     for idx, viewpoint in enumerate(config['cameras']):
                         gt_image = viewpoint.original_image.cuda()
+                        if idx == 0:
+                            h = gt_image.shape[0]
+                            w = gt_image.shape[2]
+                            resize_transform = transforms.Resize((h, w))
                         viewpoint_cam_id = torch.tensor([viewpoint.uid], device = 'cuda')
                         embedding_gt_image = model.embeddings(viewpoint_cam_id)
                         envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
                         model.envlight.set_base(envlight_sh)
                         render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, *renderArgs)
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
+                        resize_image = transforms.ToPILImage()(image)
+                        resized_image = resize_transform(resize_image)
+                        final_image = transforms.ToTensor()(resized_image).cuda()
+                        images = torch.cat((images, final_image.unsqueeze(0)), dim=0)
                         gt_image = torch.clamp(gt_image, 0.0, 1.0)
-                        images = torch.cat((images, image.unsqueeze(0)), dim=0)
-                        gts = torch.cat((gts, gt_image.unsqueeze(0)), dim=0)
+                        resize_gt_image = transforms.ToPILImage()(gt_image)
+                        resized_gt_image = resize_transform(resize_gt_image)
+                        final_gt_image = transforms.ToTensor()(resized_gt_image).cuda()
+                        gts = torch.cat((gts, final_gt_image.unsqueeze(0)), dim=0)
                         if tb_writer and (idx < 10):
                             tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                             if iteration == testing_iterations[0]:
