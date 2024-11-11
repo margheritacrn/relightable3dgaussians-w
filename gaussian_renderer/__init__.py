@@ -49,15 +49,6 @@ def render_normal(viewpoint_cam, depth, bg_color, alpha):
 
     return normal_ref
 
-# render 360 lighting for a single gaussian
-def render_lighting(pc : GaussianModel, resolution=(512, 1024), sampled_index=None):
-    if pc.brdf_mode=="envmap":
-        lighting = extract_env_map(pc.brdf_mlp, resolution) # (H, W, 3)
-        lighting = lighting.permute(2,0,1) # (3, H, W)
-    else:
-        raise NotImplementedError
-
-    return lighting
 
 def normalize_normal_inplace(normal, alpha):
     # normal: (3, H, W), alpha: (H, W)
@@ -135,9 +126,9 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         albedo = pc.get_albedo # (N, 3)
         normal, delta_normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized, return_delta=True) # (N, 3) 
         delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
-        specular  = pc.get_specular # (N, 3) 
         roughness = pc.get_roughness # (N, 1) 
         metalness = pc.get_metalness # (N,1)
+        specular = pc.get_specular
         color, brdf_pkg = envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...], specular[None, None, ...], roughness[None, None, ...], metalness[None, None, ...], view_pos[None, None, ...])
 
         colors_precomp = color.squeeze() # (N, 3) 
@@ -185,7 +176,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
             render_extras.update({"delta_normal_norm": delta_normal_norm.repeat(1, 3)})
         if debug:
             render_extras.update({ 
-                "specular": specular, 
                 "roughness": roughness.repeat(1, 3), 
                 "diffuse_color": diffuse_color, 
                 "specular_color": specular_color

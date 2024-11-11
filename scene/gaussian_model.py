@@ -19,7 +19,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view
+from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci
 import open3d as o3d
 # TODO: here I think that I don´t need the lightnet, because is per image not per Gaussian
 
@@ -97,8 +97,20 @@ class GaussianModel:
     
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
+    
 
     def get_normal(self, dir_pp_normalized=None, return_delta=False):
+        normal_axis = self.get_minimum_axis
+        normal_axis = normal_axis
+        normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
+        normal = normal_axis/normal_axis.norm(dim=1, keepdim=True) # (N, 3)
+        if return_delta:
+            return normal, normal
+        else:
+            return normal
+
+
+    def get_normal_original(self, dir_pp_normalized=None, return_delta=False):
         normal_axis = self.get_minimum_axis
         normal_axis = normal_axis
         normal_axis, positive = flip_align_view(normal_axis, dir_pp_normalized)
@@ -167,8 +179,6 @@ class GaussianModel:
         #TODO: check here
         # self._albedo = nn.Parameter(features[:,:3].contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:,3:].contiguous().requires_grad_(True))
-
-
         normals = np.zeros_like(np.asarray(pcd.points, dtype=np.float32))
         normals2 = np.copy(normals)
 
@@ -184,6 +194,69 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
+
+    @torch.no_grad()
+    def get_sky_xyz(self, num_points: int, cameras):
+        """Adapted from https://arxiv.org/abs/2407.08447"""
+        points = get_uniform_points_on_sphere_fibonacci(num_points)
+        points = points.to("cuda")
+        mean = self._xyz.mean(0)[None]
+        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97) * 10
+        points = points * sky_distance
+        points = points + mean
+        gmask = torch.zeros((points.shape[0],), dtype=torch.bool, device=points.device)
+        for cam in cameras:
+            uv = cam.project(points[torch.logical_not(gmask)])
+            mask = torch.logical_not(torch.isnan(uv).any(-1))
+            # Only top 2/3 of the image
+            assert cam.image_width is not None and cam.image_height is not None
+            mask = torch.logical_and(mask, uv[..., -1] < 2/3 * cam.image_height)
+            gmask[torch.logical_not(gmask)] = torch.logical_or(gmask[torch.logical_not(gmask)], mask)
+
+        return points[gmask], sky_distance / 2
+
+
+    def extend_with_sky_gaussians(self, num_points: int, cameras):
+        sky_xyz, _ = self.get_sky_xyz(num_points, cameras)
+        print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
+
+        self._xyz = nn.Parameter(torch.cat([self._xyz, sky_xyz], dim=0).requires_grad_(True))
+
+        sky_albedo = 0.5*torch.ones((sky_xyz.shape[0], 3), device=self._albedo.device, requires_grad=True)
+        self._albedo = nn.Parameter(torch.cat([self._albedo, sky_albedo], dim=0))
+
+        sky_specular = torch.zeros((sky_xyz.shape[0], 3), device=self._specular.device, requires_grad=True)
+        self._specular = nn.Parameter(torch.cat([self._specular, sky_specular], dim=0))
+
+        sky_metalness = torch.zeros((sky_xyz.shape[0], 1), device=self._metalness.device, requires_grad=True)
+        self._metalness = nn.Parameter(torch.cat([self._metalness, sky_metalness], dim=0))
+
+        sky_roughness = torch.zeros((sky_xyz.shape[0], 1), device=self._roughness.device, requires_grad=True)
+        self._roughness = nn.Parameter(torch.cat([self._roughness, sky_roughness], dim=0))
+
+        sky_normals = torch.from_numpy(np.zeros((sky_xyz.shape[0], 3), dtype=np.float32)).to(self._normal.device).requires_grad_(True)
+        self._normal = nn.Parameter(torch.cat([self._normal, sky_normals], dim=0))
+
+        sky_normals2 = torch.zeros_like(sky_normals)
+        self._normal2 = nn.Parameter(torch.cat([self._normal2, sky_normals2], dim=0))
+
+        sky_opacity = torch.ones((sky_xyz.shape[0], 1), device=self._opacity.device, requires_grad=True)
+        self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
+
+        dist2 = torch.clamp_min(distCUDA2(sky_xyz.float().cuda()), 0.0000001)
+        sky_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        sky_rots = torch.zeros((sky_xyz.shape[0], 4), device=self._rotation.device)
+        sky_rots[:, 0] = 1
+        self._rotation = nn.Parameter(torch.cat([self._rotation, sky_rots.requires_grad_(True)], dim=0))
+        self._scaling = nn.Parameter(torch.cat([self._scaling, sky_scales.requires_grad_(True)]))
+        sky_max_radii2D = torch.zeros((sky_xyz.shape[0]), device=self.max_radii2D.device)
+        self.max_radii2D = nn.Parameter(torch.cat([self.max_radii2D, sky_max_radii2D]))
+
+        #TODO: remove feature_rest
+        sky_f_rest = torch.zeros((sky_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
+        self._features_rest = nn.Parameter(torch.cat([self._features_rest, sky_f_rest]))
+
 
     def training_setup(self, envlight, embeddings, training_args):
         self.percent_dense = training_args.percent_dense
@@ -215,6 +288,37 @@ class GaussianModel:
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
 
+
+    def training_setup_relit3DGW(self, training_args: dict):
+        self.percent_dense = training_args.percent_dense
+        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+
+        l = [
+            {'params': [self._xyz], 'lr': training_args.position_lr_init*self.spatial_lr_scale, "name": "xyz"},
+            {'params': [self._albedo], 'lr': training_args.feature_lr, "name": "albedo"},
+            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+            {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
+            {'params': [self._scaling], 'lr': training_args.scaling_lr*self.spatial_lr_scale, "name": "scaling"},
+            {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
+            {'params': [self._roughness], 'lr': training_args.roughness_lr, "name": "roughness"},
+            {'params': [self._specular], 'lr': training_args.specular_lr, "name": "specular"},
+            {'params': [self._metalness], 'lr': training_args.metalness_lr, "name": "metalness"},
+            {'params': [self._normal], 'lr': training_args.normal_lr, "name": "normal"},
+        ]
+        self._normal2.requires_grad_(requires_grad=False)
+        l.extend([
+            {'params': [self._normal2], 'lr': training_args.normal_lr, "name": "normal2"},
+        ])
+
+        # self.optimizer = torch.optim.Adam(l, lr=0.01, eps=1e-15)
+        self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
+                                                    lr_final=training_args.position_lr_final*self.spatial_lr_scale,
+                                                    lr_delay_mult=training_args.position_lr_delay_mult,
+                                                    max_steps=training_args.position_lr_max_steps)
+        return l
+
+
     def training_setup_SHoptim(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -229,6 +333,9 @@ class GaussianModel:
         self.f_rest_scheduler_args = get_const_lr_func(training_args.feature_lr / 20.0)
 
 
+    def set_optimizer(self, optimizer: torch.optim):
+        self.optimizer = optimizer
+
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -236,28 +343,27 @@ class GaussianModel:
             if param_group["name"] == "xyz":
                 lr = self.xyz_scheduler_args(iteration)
                 param_group['lr'] = lr
-            if iteration == 30000 and (param_group["name"] == "envlight" or param_group["name"] == "embeddings"):
-                param_group['lr'] = 0.0001
 
 
     def construct_list_of_attributes(self, viewer_fmt=False):
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         # All channels except the 3 DC
-        for i in range(self._albedo.shape[1]*self._albedo.shape[2]):
+        for i in range(self._albedo.shape[1]):
             l.append('albedo_{}'.format(i))
+        """
         for i in range(self._features_rest.shape[1]*self._features_rest.shape[2]):
             l.append('f_rest_{}'.format(i))
-        l.append(['nx2', 'ny2', 'nz2'])
+        """
+        l.extend(['nx2', 'ny2', 'nz2'])
         l.append('opacity')
         for i in range(self._scaling.shape[1]):
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
-        if not viewer_fmt:
-            l.append('roughness')
-            l.append('metalness')
-            for i in range(self._specular.shape[1]):
-                l.append('specular{}'.format(i))
+        l.append('roughness')
+        l.append('metalness')
+        for i in range(self._specular.shape[1]):
+            l.append('specular{}'.format(i))
         return l
 
     def save_ply(self, path, viewer_fmt=False):
@@ -284,17 +390,13 @@ class GaussianModel:
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         if not viewer_fmt:
-            attributes = np.concatenate((xyz, normals, normals2, albedo, f_rest, opacities, scale, rotation, roughness, metalness, specular), axis=1)
+            attributes = np.concatenate((xyz, normals, albedo, normals2, opacities, scale, rotation, roughness, metalness, specular), axis=1)
         else:
-            attributes = np.concatenate((xyz, normals, albedo, f_rest, opacities, scale, rotation), axis=1)
+            attributes = np.concatenate((xyz, normals, albedo, opacities, scale, rotation, roughness, metalness, specular), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
 
-        pcd_o3d = o3d.geometry.PointCloud()
-        pcd_o3d.points = o3d.utility.Vector3dVector(xyz)
-        pcd_o3d.colors = o3d.utility.Vector3dVector(albedo)
-        return pcd_o3d
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
@@ -365,7 +467,7 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "envlight" or group["name"] == "embeddings":
+            if group["name"] == "envlight_sh" or group["name"] == "embeddings":
                 continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -382,7 +484,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "envlight" or group["name"] == "embeddings":
+            if group["name"] == "envlight_sh" or group["name"] == "embeddings":
                 continue
             stored_state = self.optimizer.state.get(group['params'][0], None)
             if stored_state is not None:
@@ -423,7 +525,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] == "envlight" or group["name"] == "embeddings" :
+            if group["name"] == "envlight_sh" or group["name"] == "embeddings" :
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]

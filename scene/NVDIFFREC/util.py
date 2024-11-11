@@ -496,6 +496,30 @@ def aces_film(rgb: Union[np.ndarray, torch.Tensor]) -> Union[np.ndarray, torch.T
     elif isinstance(rgb, torch.Tensor):
         return rgb.clamp(min=0.0, max=1.0)
 #----------------------------------------------------------------------------------------
+def linear_to_sRGB(rgb, use_quantile=False, clamp=True):
+    """The functions converts linear RGB to sRGB.
+    
+    Args:
+        lrgb: [..., 3]
+        use_quantile: Whether to use the 98th quantile to normalise the color values.
+        
+        Returns:
+            color: [..., 3]
+    """
+
+    rgb = torch.where(
+        rgb <= 0.0031308,
+        12.92 * rgb,
+        1.055 * torch.pow(torch.abs(rgb), 1 / 2.4) - 0.055, # apply gamma correction
+    )
+    if clamp:
+        if isinstance(rgb, np.ndarray):
+            return rgb.clip(min=0.0, max=1.0)
+        elif isinstance(rgb, torch.Tensor):
+            return rgb.clamp(min=0.0, max=1.0)
+    return rgb
+
+
 def gamma_correction(rgb: torch.Tensor, gamma=2.2) -> Union[np.ndarray, torch.Tensor]:
     if isinstance(rgb, np.ndarray):
         rgb = rgb.clip(min=0.0, max=1.0) + 1e-4

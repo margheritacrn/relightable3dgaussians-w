@@ -17,9 +17,13 @@ import random
 import os
 import glob
 from pathlib import Path
+import math
+from torch.utils.data import TensorDataset
+
 
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
+
 
 def PILtoTorch(pil_image, resolution):
     resized_image_PIL = pil_image.resize(resolution)
@@ -29,10 +33,12 @@ def PILtoTorch(pil_image, resolution):
     else:
         return resized_image.unsqueeze(dim=-1).permute(2, 0, 1)
 
+
 def get_const_lr_func(const):
     def helper(step):
         return const
-    
+
+
 def get_expon_lr_func(
     lr_init, lr_final, lr_delay_steps=0, lr_delay_mult=1.0, max_steps=1000000
 ):
@@ -51,6 +57,7 @@ def get_expon_lr_func(
     :return HoF which takes step as input
     """
 
+
     def helper(step):
         if step < 0 or (lr_init == 0.0 and lr_final == 0.0):
             # Disable this parameter
@@ -68,6 +75,7 @@ def get_expon_lr_func(
 
     return helper
 
+
 def strip_lowerdiag(L):
     uncertainty = torch.zeros((L.shape[0], 6), dtype=torch.float, device="cuda")
 
@@ -81,6 +89,7 @@ def strip_lowerdiag(L):
 
 def strip_symmetric(sym):
     return strip_lowerdiag(sym)
+
 
 def build_rotation(r):
     norm = torch.sqrt(r[:,0]*r[:,0] + r[:,1]*r[:,1] + r[:,2]*r[:,2] + r[:,3]*r[:,3])
@@ -105,6 +114,7 @@ def build_rotation(r):
     R[:, 2, 2] = 1 - 2 * (x*x + y*y)
     return R
 
+
 def build_scaling_rotation(s, r):
     L = torch.zeros((s.shape[0], 3, 3), dtype=torch.float, device="cuda")
     R = build_rotation(r)
@@ -115,6 +125,7 @@ def build_scaling_rotation(s, r):
 
     L = R @ L
     return L
+
 
 def safe_state(silent):
     old_f = sys.stdout
@@ -139,6 +150,7 @@ def safe_state(silent):
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
 
+
 def get_minimum_axis(scales, rotations):
     sorted_idx = torch.argsort(scales, descending=False, dim=-1)
     R = build_rotation(rotations)
@@ -146,6 +158,7 @@ def get_minimum_axis(scales, rotations):
     x_axis = R_sorted[:,:,0] # normalized by defaut, edited to select column instead of row.
 
     return x_axis
+
 
 def flip_align_view(normal, viewdir):
     # normal: (N, 3), viewdir: (N, 3)
@@ -194,14 +207,46 @@ def rand_hemisphere_dir(N: torch.Tensor, n: torch.Tensor):
     return d
 
 
+def get_uniform_points_on_sphere_fibonacci(num_points, *, dtype=None, xnp=torch):
+    # https://arxiv.org/pdf/0912.4540.pdf
+    # Golden angle in radians
+    if dtype is None:
+        dtype = xnp.float32
+    phi = math.pi * (3. - math.sqrt(5.))
+    N = (num_points - 1) / 2
+    i = xnp.linspace(-N, N, num_points, dtype=dtype)
+    lat = xnp.arcsin(2.0 * i / (2*N+1))
+    lon = phi * i
+
+    # Spherical to cartesian
+    x = xnp.cos(lon) * xnp.cos(lat)
+    y = xnp.sin(lon) * xnp.cos(lat)
+    z = xnp.sin(lat)
+    return xnp.stack([x, y, z], -1)
+
+
 def load_npy_tensors(path: Path):
     """The function loads all npy tensors in path."""
     npy_tensors = {}
     npy_tensors_fnames = path.glob("*.npy")
-    
-    # Corrected indentation for the loop
+
     for npy_tensor_fname in npy_tensors_fnames:
         npy_tensor = np.load(npy_tensor_fname)
         npy_tensors[str(npy_tensor_fname)] = npy_tensor
 
     return npy_tensors
+
+def get_half_images(img: torch.tensor, left: bool = True):
+    """The function return a TesnorDatset containing the specified vertical halfs of the input.
+    Args:
+        img (torch.tensor): batch of images of shape (..., 3, H, W)
+        left(bool): if True returns left vertical half
+    Returns:
+        left/right_img_half (torch.tensor): imgs half cropped
+    """
+    if left: 
+        left_half_images = img[..., :, :img.shape[2] // 2]
+        return left_half_images
+    else:
+        right_half_images = img[..., :, img.shape[2] // 2:]
+        return right_half_images

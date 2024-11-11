@@ -2,7 +2,7 @@ import torch
 from torch import Tensor, nn
 import numpy as np
 from tqdm import tqdm
-from data.dataloader import load_train_test
+from data.dataloader_net import load_train_test
 # TODO: is np.int32 necessary?
 # TODO: input resized to? 256? assume 3x256x256
 # TODO: consider whether to add another dense layer to the encoder
@@ -91,7 +91,7 @@ class EmbeddingNet(nn.Module):
         torch.save(self.state_dict(), path + "/EmbeddingNet_model_epoch_"+str(epoch)+".pth")
 
    
-    def optimize_ae(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
+    def optimize(self, data_path, num_epochs: int = 50, resize_dim: int = 256, batch_size: int = 32,
                     verbose=False, tensorboard_writer=None,
                     progress_bar=None, output_path=None, get_datatransforms_only = False, 
                     return_outputs=False):
@@ -219,12 +219,10 @@ class SHMlp(nn.Module):
             self.train()
             for batch in dataloader:
                 optim.zero_grad() 
-                input = batch[0].cuda()
+                input = batch[0].squeeze().cuda()
                 sh_target = batch[1].cuda()
                 sh_out = self(input)
                 mse = loss_(sh_target, sh_out)
                 mse.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
                 optim.step() 
-
-

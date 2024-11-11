@@ -1,0 +1,8 @@
+#dataset parameters
+source_path: ""
+model_path: ""
+images: "images"
+resolution: -1
+white_background: False
+data_device: "cuda"
+eval: True

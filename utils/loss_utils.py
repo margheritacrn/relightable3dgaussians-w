@@ -206,8 +206,17 @@ def envlight_loss2(envlight: EnvironmentLight, normals: torch.Tensor, roughness:
         return l2_norm_diff
     
 
-def envlight_init_loss(sh_output: torch.Tensor, sh_envmap_init: torch.Tensor):
+def envlight_prior_loss(sh_output: torch.Tensor, sh_envmap_init: torch.Tensor):
     return l2_loss(sh_output, sh_envmap_init)
+
+
+def min_scale_loss(radii, gaussians):
+    visibility_filter = radii > 0
+    if visibility_filter.sum() > 0: # consider just visible gaussians
+        scale = gaussians.get_scaling[visibility_filter]
+        sorted_scale, _ = torch.sort(scale, dim=-1)
+        min_scale_loss = sorted_scale[...,0] # consider just minimum scales
+    return min_scale_loss.mean()
 
 
 def cam_depth2world_point(cam_z, pixel_idx, intrinsic, extrinsic):
