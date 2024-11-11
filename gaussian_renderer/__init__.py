@@ -126,9 +126,9 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         albedo = pc.get_albedo # (N, 3)
         normal, delta_normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized, return_delta=True) # (N, 3) 
         delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
-        specular  = pc.get_specular # (N, 3) 
         roughness = pc.get_roughness # (N, 1) 
         metalness = pc.get_metalness # (N,1)
+        specular = pc.get_specular
         color, brdf_pkg = envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...], specular[None, None, ...], roughness[None, None, ...], metalness[None, None, ...], view_pos[None, None, ...])
 
         colors_precomp = color.squeeze() # (N, 3) 
@@ -176,7 +176,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
             render_extras.update({"delta_normal_norm": delta_normal_norm.repeat(1, 3)})
         if debug:
             render_extras.update({ 
-                "specular": specular, 
                 "roughness": roughness.repeat(1, 3), 
                 "diffuse_color": diffuse_color, 
                 "specular_color": specular_color
