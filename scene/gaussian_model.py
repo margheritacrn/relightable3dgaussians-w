@@ -98,10 +98,9 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
     
-
+    #TODO. remove return_delta, it's here not to edit gaussian_renderer module.
     def get_normal(self, dir_pp_normalized=None, return_delta=False):
         normal_axis = self.get_minimum_axis
-        normal_axis = normal_axis
         normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
         normal = normal_axis/normal_axis.norm(dim=1, keepdim=True) # (N, 3)
         if return_delta:
@@ -150,7 +149,7 @@ class GaussianModel:
 
     @property
     def get_minimum_axis(self):
-        return get_minimum_axis(self.get_scaling, self.get_rotation)
+        return get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
 
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:

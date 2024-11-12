@@ -152,12 +152,10 @@ def safe_state(silent):
 
 
 def get_minimum_axis(scales, rotations):
-    sorted_idx = torch.argsort(scales, descending=False, dim=-1)
-    R = build_rotation(rotations)
-    R_sorted = torch.gather(R, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
-    x_axis = R_sorted[:,:,0] # normalized by defaut, edited to select column instead of row.
+    min_scales_arg = torch.argmin(scales, dim=-1)
+    min_R_axis = rotations.gather(2, min_scales_arg[:, None, None].expand(-1,3,-1)).squeeze(-1)
 
-    return x_axis
+    return min_R_axis
 
 
 def flip_align_view(normal, viewdir):
