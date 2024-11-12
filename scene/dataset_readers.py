@@ -98,6 +98,12 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
             cy = intr.params[-1]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
+        elif intr.model == "SIMPLE_RADIAL":
+            focal_length_x = intr.params[0]
+            cx = intr.params[1]
+            cy = intr.params[2]
+            FovY = focal2fov(focal_length_x, height)
+            FovX = focal2fov(focal_length_x, width)
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
