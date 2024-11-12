@@ -27,7 +27,7 @@ def readImages(renders_dir, gt_dir, masks_path=None):
     renders = []
     gts = []
     image_names = []
-
+    discarded_samples = 0
     for fname in os.listdir(renders_dir):
         render = Image.open(renders_dir / fname)
         render = tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda()
@@ -35,9 +35,17 @@ def readImages(renders_dir, gt_dir, masks_path=None):
         gt = tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda()
         if masks_path is not None:
             mask_path = os.path.join(masks_path, fname)
-            mask = tf.to_tensor(Image.open(mask_path).convert("L")).cuda()
+            mask = Image.open(mask_path).convert("L")
+            if mask.height != gt.shape[2]:
+                resized_mask = mask.resize((mask.width, gt.shape[2]), Image.NEAREST)
+                mask = tf.to_tensor(resized_mask).cuda()
+            else:
+                mask = tf.to_tensor(mask).cuda()
             # Ensure mask is binary
             mask = (mask > 0.5).float()
+            if mask.shape[1] != gt.shape[2]:
+                discarded_samples += 1
+                continue
             mask = mask.expand_as(gt)
             renders.append(gt*mask)
             gts.append(render*mask)
@@ -45,6 +53,7 @@ def readImages(renders_dir, gt_dir, masks_path=None):
             renders.append(gt)
             gts.append(render)
         image_names.append(fname)
+    print(f"Reading images completed- discarder samples: {discarded_samples}")
     return renders, gts, image_names
 
 
