@@ -24,7 +24,7 @@ class Camera(nn.Module):
 
         self.uid = uid
         self.colmap_id = colmap_id
-        self.R = R
+        self.R = R # w2c
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
@@ -75,12 +75,17 @@ class Camera(nn.Module):
         self.projection_matrix = getProjectionMatrix(znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy).transpose(0,1).cuda()
         self.full_proj_transform = (self.world_view_transform.unsqueeze(0).bmm(self.projection_matrix.unsqueeze(0))).squeeze(0)
         self.camera_center = self.world_view_transform.inverse()[3, :3]
-    
-    def get_calib_matrix_nerf(self):
-        focal = fov2focal(self.FoVx, self.image_width)  # original focal length
-        intrinsic_matrix = torch.tensor([[focal, 0, self.image_width / 2], [0, focal, self.image_height / 2], [0, 0, 1]]).float()
+
+
+    def get_calib_matrix_nerf(self, scale=1.0):
+        Fx = fov2focal(self.FoVx, self.image_width)
+        Fy = fov2focal(self.FoVy, self.image_height)
+        Cx = 0.5 * self.image_width
+        Cy = 0.5 * self.image_height
+        intrinsic_matrix = torch.tensor([[Fx/scale, 0, Cx/scale], [0, Fy/scale, Cy/scale], [0, 0, 1]]).float()
         extrinsic_matrix = self.world_view_transform.transpose(0,1).contiguous() # cam2world
         return intrinsic_matrix, extrinsic_matrix
+    
 
     def get_rays(self):
         intrinsic_matrix, extrinsic_matrix = self.get_calib_matrix_nerf()
