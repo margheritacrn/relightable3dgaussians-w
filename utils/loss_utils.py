@@ -20,6 +20,8 @@ from utils.general_utils import rand_hemisphere_dir
 from scene.NVDIFFREC import util
 from scene.NVDIFFREC.light import EnvironmentLight
 import random
+import torch.nn.functional as F
+
 
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
@@ -98,7 +100,9 @@ def predicted_normal_loss(normal, normal_ref, alpha=None):
     w = weight.permute(1,2,0).reshape(-1,3)[...,0].detach()
     n = normal_ref.permute(1,2,0).reshape(-1,3).detach()
     n_pred = normal.permute(1,2,0).reshape(-1,3)
-    loss = (w * (1.0 - torch.sum(n * n_pred, axis=-1))).mean()
+    # n_pred = F.normalize(n_pred, dim=-1)
+    # loss = (w * (1.0 - torch.sum(n * n_pred, axis=-1))).mean()
+    loss = ((1.0 - torch.sum(n * n_pred, axis=-1))).mean() # compute cos between n and n_pred, for them to be perfectly aligned it has to be 1
 
     return loss
 
@@ -215,7 +219,7 @@ def min_scale_loss(radii, gaussians):
     if visibility_filter.sum() > 0: # consider just visible gaussians
         scale = gaussians.get_scaling[visibility_filter]
         sorted_scale, _ = torch.sort(scale, dim=-1)
-        min_scale_loss = sorted_scale[...,0] # consider just minimum scales
+        min_scale_loss = sorted_scale[...,0] # take minimum scales
     return min_scale_loss.mean()
 
 
