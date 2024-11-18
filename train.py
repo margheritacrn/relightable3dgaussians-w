@@ -97,8 +97,6 @@ def training(cfg, testing_iterations, saving_iterations):
             gt_envlight_sh_prior = model.envlight_sh_priors[init_light_condition]
             gt_envlight_sh_prior = torch.tensor(gt_envlight_sh_prior, dtype=torch.float32, device="cuda")
 
-        model.gaussians.set_requires_grad("normal", state=iteration >= cfg.optimizer.normal_reg_from_iter)
-        model.gaussians.set_requires_grad("normal2", state=iteration >= cfg.optimizer.normal_reg_from_iter)
         # Get SH coefficients of environment lighting for current training image
         #TODO: edit here: sh_envlight_mlp needs an embedding vector as input. I probably need the camera index. Compare vewpoint stack content with scene_info in scne/__ini__.py
         embedding_gt_image = model.embeddings(viewpoint_cam_id)
@@ -109,26 +107,20 @@ def training(cfg, testing_iterations, saving_iterations):
         # Render
         render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        losses_extra = {}
-        if iteration > cfg.optimizer.normal_reg_from_iter:
-            if iteration < cfg.optimizer.normal_reg_util_iter:
-                losses_extra['predicted_normal'] = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"])
-            losses_extra['zero_one'] = zero_one_loss(render_pkg["alpha"])
-            # if "delta_normal_norm" not in render_pkg.keys() and cfg.optimizer.lambda_delta_reg>0: assert()
-            # if "delta_normal_norm" in render_pkg.keys():
-              #  losses_extra['delta_reg'] = delta_normal_loss(render_pkg["delta_normal_norm"], render_pkg["alpha"])
 
         # Loss
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - cfg.optimizer.lambda_dssim) * Ll1 + cfg.optimizer.lambda_dssim * (1.0 - ssim(image, gt_image))
-        for k in losses_extra.keys():
-            loss += getattr(cfg.optimizer, f'lambda_{k}')* losses_extra[k]
+        # Normal loss
+        if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
+            normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"])
+            loss += cfg.optimizer.lambda_normal*normal_loss
         # Envlight losses
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
-            dir_pp = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
-            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
+            viewing_dirs = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
+            viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
             # Create a copy of the normals without gradient tracking for envlight loss computation
-            normals = model.gaussians.get_normal(dir_pp_normalized=dir_pp_normalized).data.clone()
+            normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm).data.clone() #NOTE: could just use detach()
             envl_loss = envlight_loss(model.envlight, normals)
             loss += cfg.optimizer.lambda_envlight*envl_loss
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
@@ -138,6 +130,10 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.optimizer.lambda_scale > 0:
             scale_loss = min_scale_loss(radii, model.gaussians)
             loss += cfg.optimizer.lambda_scale*scale_loss
+        # Distortion loss
+        if cfg.optimizer.lambda_dist > 0:
+            dist_loss = cfg.optimizer.lambda_dist*(render_pkg["rendered_distance"]).mean()
+            loss += cfg.optimizer.lambda_dist*dist_loss 
         loss.backward()
 
         iter_end.record()
@@ -155,6 +151,7 @@ def training(cfg, testing_iterations, saving_iterations):
             model.gaussians.max_radii2D[visibility_filter] = torch.max(model.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
 
             # Log and save
+            losses_extra = {}
             losses_extra['psnr'] = psnr(image, gt_image).mean()
             training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations,
