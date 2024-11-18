@@ -12,20 +12,20 @@ scaling_lr: 0.001
 rotation_lr: 0.001
 percent_dense: 0.01
 lambda_dssim: 0.2
-densification_interval: 100
+densification_interval: 100 #100
 opacity_reset_interval: 3000
-densify_from_iter: 500
-densify_until_iter: 15_000
+densify_from_iter: 500 # 500
+densify_until_iter: 15_000 #15_000
 densify_grad_threshold: 0.0002
 normal_lr: 0.0002
 specular_lr: 0.0002
 roughness_lr: 0.0002
 metalness_lr: 0.0002
 albedo_lr: 0.0002
-normal_reg_from_iter: 0
-normal_reg_util_iter: 0 #30_000
-lambda_zero_one: 0 # 1e-3
-lambda_predicted_normal: 2e-1
+reg_normal_from_iter: 15_000 # if from the beginnig depth not learned correctly
+normal_reg_util_iter: 0 # 30_000
+lambda_dist: 0 #1, 10
+lambda_normal: 0.05 # 1e-1 #2e-1
 lambda_delta_reg: 1e-3
 lambda_scale: 100.0
 # environment light 
