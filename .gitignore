@@ -7,3 +7,7 @@ __pycache__
 output*
 **/build
 *.egg-info
+build_submodules.sh
+submodules_PGSR
+*.dump
+gaussian_renderer/initpgsr.py
