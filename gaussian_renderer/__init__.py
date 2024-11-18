@@ -126,8 +126,11 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
                                          roughness[None, None, ...], metalness[None, None, ...], view_pos[None, None, ...])
 
         colors_precomp = color.squeeze() # (N, 3) 
-        diffuse_color = brdf_pkg['diffuse'].squeeze() # (N, 3) 
-        specular_color = brdf_pkg['specular'].squeeze() # (N, 3) 
+        diffuse_color = brdf_pkg['diffuse'].squeeze() # (N, 3)
+        if brdf_pkg['specular'] is not None:
+            specular_color = brdf_pkg['specular'].squeeze() # (N, 3)
+        else:
+            specular_color = None
 
     else:
         colors_precomp = override_color
@@ -166,10 +169,10 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     if debug:
         render_extras.update({ 
             "roughness": roughness.repeat(1, 3), 
-            "diffuse_color": diffuse_color, 
-            "specular_color": specular_color
-            })
-    
+            "diffuse_color": diffuse_color})
+        if specular_color is not None:          
+                render_extras.update({"specular_color": specular_color})
+
     out_extras = {}
     for k in render_extras.keys():
         if render_extras[k] is None: continue

@@ -170,8 +170,8 @@ class EnvironmentLight(torch.nn.Module):
             specular_radiance = spec_irradiance*reflectance
             shaded_col += specular_radiance
             extras['specular'] = spec_irradiance*reflectance
-        else: #TODO: remove this else statement
-            extras['specular'] = extras['diffuse']
+        else:
+            extras['specular'] = None
 
         if tone:
             # apply tone mapping and clamp in range [0,1]: linear --> sRGB
