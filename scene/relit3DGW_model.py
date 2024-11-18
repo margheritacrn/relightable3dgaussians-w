@@ -56,8 +56,9 @@ class Relightable3DGW:
             self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
             self.envlight_sh_mlp.cuda()
             if self.config.optimizer.lambda_envlight_sh_prior > 0 or self.config.init_sh_mlp:
-                if os.path.exists(self.config.envlight_sh_prior_path):
-                    self.envlight_sh_priors = load_npy_tensors(Path(self.config.envlight_sh_prior_path))
+                self.envlight_sh_prior_path = os.path.join(self.config.source_path, "train/envmaps_init")
+                if os.path.exists(self.envlight_sh_prior_path):
+                    self.envlight_sh_priors = load_npy_tensors(Path(self.envlight_sh_prior_path))
                 else:
                     raise ValueError('Path for environment light sh priors not found')
             
