@@ -56,7 +56,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             embedding_gt = model.embeddings(view_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt)
         model.envlight.set_base(envlight_sh)
-        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=True)
+        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=False)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
         torch.cuda.synchronize()
@@ -75,7 +75,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
                 render_pkg[k] = apply_depth_colormap(-render_pkg["depth"][0][...,None]).permute(2,0,1)
             elif "normal" in k:
                 render_pkg[k] = 0.5 + (0.5*render_pkg[k])
-            torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, '{0:05d}'.format(idx) + ".png"))
+            torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
 
 def render_sets(cfg, skip_train : bool, skip_test : bool):
     with torch.no_grad():
