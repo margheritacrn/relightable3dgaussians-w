@@ -14,7 +14,7 @@ percent_dense: 0.01
 lambda_dssim: 0.2
 densification_interval: 100 #100
 opacity_reset_interval: 3000
-densify_from_iter: 500 # 500
+densify_from_iter: 5000 # 500
 densify_until_iter: 15_000 #15_000
 densify_grad_threshold: 0.0002
 normal_lr: 0.0002

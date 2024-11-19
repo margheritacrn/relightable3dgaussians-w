@@ -4,7 +4,7 @@ envlight_sh_degree: 4
 init_embeddings: True
 init_sh_mlp: True
 embeddings_dim: 32
-num_sky_points: 25000 #15000, 25000
+num_sky_points: 15000 #15000, 25000
 load_iteration: None
 defaults:
   - optimizer: optimization_params.yaml
