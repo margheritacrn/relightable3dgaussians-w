@@ -30,7 +30,7 @@ if not args.skip_training:
     common_args = " --quiet --eval --save_iterations 30_000 50_000 "
     for scene in nerfosr_scenes:
         source = args.nerfosr + "/" + scene
-        os.system("python train.py -s " + source + args.output_path + "/" + scene + common_args)
+        os.system("python train.py --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
 
 if not args.skip_rendering:
     all_sources = []
@@ -39,5 +39,5 @@ if not args.skip_rendering:
 
     common_args = " --quiet --eval "
     for scene, source in zip(nerfosr_scenes, all_sources):
-        os.system("python render.py --iteration 30000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
-        os.system("python render.py --iteration 50000 -s " + source + " -m " + args.output_path + "/" + scene + common_args)
+        os.system("python render.py --iteration 30000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
+        os.system("python render.py --iteration 50000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
