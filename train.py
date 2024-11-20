@@ -303,7 +303,7 @@ if __name__ == "__main__":
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--num_sky_points", type=int)
+    parser.add_argument("--num_sky_points", type=int, default=15_000)
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
