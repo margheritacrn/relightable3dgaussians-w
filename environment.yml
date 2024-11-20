@@ -31,3 +31,5 @@ dependencies:
     - ninja
     - tensorboard
     - lpips==0.1.4
+    - hydra-core
+    - omegaconf
