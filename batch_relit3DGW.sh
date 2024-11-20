@@ -5,11 +5,10 @@
 #SBATCH --output=%j_%x.out
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --gpus=2
+#SBATCH --gpus=3
 
 #####################################################################################
-
+#--cpus-per-task=8
 # This included file contains the definition for $LOCAL_JOB_DIR to be used locally on the node.
 source "/etc/slurm/local_job_dir.sh"
 
@@ -21,7 +20,6 @@ mkdir -p "${LOCAL_JOB_DIR}/job_results"
 
 
 
-
 # Launch the apptainer image with --nv for nvidia support. Two bind mounts are used: 
 # - One for the ImageNet dataset ($DATAPOOL1/datasets/ImageNet-complete) mapped to /mnt/dataset in the container and 
 # - One for the results (e.g. checkpoint data that you may store in $LOCAL_JOB_DIR on the node
@@ -29,7 +27,7 @@ mkdir -p "${LOCAL_JOB_DIR}/job_results"
 # Check the line in the runsection (python -m resnet_50 train "$@") which runs the training and "$@" has all the parameters and passes them on to the python program
 
 echo "Run full eval on NeRF-OSR dataset"
-apptainer run --nv --bind $DATAPOOL3/datasets/nerfosr:/mnt/dataset --bind ${LOCAL_JOB_DIR}/job_results:/mnt/output ./relit3DGS-W.sif --output_path /mnt/output --nerfosr /mnt/dataset
+apptainer run --nv --bind $DATAPOOL3/datasets/nerfosr_tmp:/mnt/dataset --bind ${LOCAL_JOB_DIR}/job_results:/mnt/output ./relit3DGS-W.sif --output_path /mnt/output --nerfosr /mnt/dataset
 
 # These commands copy all results generated in $LOCAL_JOB_DIR back to the submit folder regarding the job id.
 cd "$LOCAL_JOB_DIR"
