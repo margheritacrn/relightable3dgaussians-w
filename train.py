@@ -167,7 +167,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
                 if iteration > cfg.optimizer.densify_from_iter and iteration % cfg.optimizer.densification_interval == 0:
                     size_threshold = 20 if iteration > cfg.optimizer.opacity_reset_interval else None
-                    model.gaussians.densify_and_prune(cfg.optimizer.densify_grad_threshold, 0.005, model.scene.cameras_extent, size_threshold)
+                    model.gaussians.densify_and_prune(cfg.optimizer.densify_grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
                 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
                     model.gaussians.reset_opacity()
@@ -284,6 +284,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
+    print(cfg)
     print("Optimizing " + cfg.dataset.model_path)
     training(cfg, cfg.test_iterations, cfg.save_iterations)
     # All done
@@ -302,9 +303,11 @@ if __name__ == "__main__":
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--num_sky_points", type=int)
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
+        f"num_sky_points={args.num_sky_points}",
         f"dataset.eval={str(args.eval)}",
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
