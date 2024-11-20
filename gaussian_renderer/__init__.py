@@ -10,11 +10,12 @@
 #
 
 import torch
+import torch.nn.functional as F
 import math
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
-from utils.graphics_utils import normal_from_depth_image
+from utils.graphics_utils import normal_from_depth_image, depth_to_normal
 from scene.NVDIFFREC.util import safe_normalize
 from utils.general_utils import flip_align_view
 # from scene.NVDIFFREC import extract_env_map
@@ -163,9 +164,12 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     depth = depth.repeat(1,3)
 
     render_extras = {"depth": depth}
-    normal_normed = normal
-    normal_normed = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
-    render_extras.update({"normal": normal_normed})
+    normal = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
+    # get normal (already directed towards the camera) in camera coords
+    R_w2c = torch.tensor(viewpoint_camera.R).cuda().to(torch.float32)
+    normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
+  
+    render_extras.update({"normal": normal})
     if debug:
         render_extras.update({ 
             "roughness": roughness.repeat(1, 3), 
@@ -189,6 +193,9 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
 
         if k == "normal" :
             out_extras[k] = (out_extras[k] - 0.5) * 2. # range (0, 1) -> (-1, 1)
+            # transform back to world space
+            out_extras[k]  = (out_extras[k].permute(1,2,0) @ R_w2c.T).permute(2,0,1)           
+            out_extras[k] = F.normalize(out_extras[k], dim = 0)
 
     torch.cuda.empty_cache()
 
@@ -219,9 +226,15 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)[0]
 
-    # Get surface normal from depth map. 
-    out_extras["normal_ref"] = render_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color=bg_color, alpha=out_extras['alpha'][0])
-    normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
+    out_extras["depth"] = out_extras["depth"]/out_extras["alpha"]
+    out_extras["depth"] = torch.nan_to_num(out_extras["depth"], 0, 0)
+
+    # Get surface normal from depth map.
+    normal_ref = depth_to_normal(viewpoint_camera, out_extras['depth'])
+    normal_ref = normal_ref.permute(2,0,1)
+    out_extras["normal_ref"] = normal_ref*(out_extras["alpha"]).detach()
+    # out_extras["normal_ref"] = render_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color=bg_color, alpha=out_extras['alpha'][0])
+    # normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
 
     out.update(out_extras)
     return out
