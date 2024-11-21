@@ -35,6 +35,7 @@ class CameraInfo(NamedTuple):
     image: np.array
     image_path: str
     image_name: str
+    sky_mask: np.array
     width: int
     height: int
     normal_image: np.array
@@ -70,7 +71,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_masks_folder, masks_extension):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -109,10 +110,15 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
+        sky_mask_path = os.path.join(sky_masks_folder, image_name+masks_extension)
         image = Image.open(image_path)
+        if os.path.exists(sky_mask_path):
+            sky_mask = Image.open(sky_mask_path).convert("L")
+        else:
+            sky_mask = None
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, cx = cx, cy=cy, image=image,
-                              image_path=image_path, image_name=image_name, width=width, height=height, 
+                              image_path=image_path, image_name=image_name, sky_mask=sky_mask, width=width, height=height, 
                               normal_image=None, alpha_mask=None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -179,8 +185,7 @@ def readNerfOSRCameras(path, cams_fname):
     return cam_infos   
 
 #TODO: fix here and fix probelm of the different extension
-def readNerfOsrInfo(path, images, eval, extension = ".jpg"):
-    # cam_infos = readNerfOSRCameras(path, cams_fname)
+def readNerfOsrInfo(path, images, eval, extension = ".jpg", masks_extension = "_mask.png"):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -193,7 +198,8 @@ def readNerfOsrInfo(path, images, eval, extension = ".jpg"):
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir))
+    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
+                                           sky_masks_folder=os.path.join(path, "sky_masks"), masks_extension=masks_extension)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     train_images = os.listdir(path + "/train/rgb")
