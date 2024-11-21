@@ -113,7 +113,7 @@ def training(cfg, testing_iterations, saving_iterations):
         loss = (1.0 - cfg.optimizer.lambda_dssim) * Ll1 + cfg.optimizer.lambda_dssim * (1.0 - ssim(image, gt_image))
         # Normal loss
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"])
+            normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask = viewpoint_cam.sky_mask.cuda())
             loss += cfg.optimizer.lambda_normal*normal_loss
         # Envlight losses
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
