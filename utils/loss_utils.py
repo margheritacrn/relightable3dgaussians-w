@@ -11,6 +11,7 @@
 
 import torch
 import torch.nn.functional as F
+import cv2
 from torch.autograd import Variable
 from math import exp
 from utils.image_utils import erode
@@ -23,8 +24,17 @@ import random
 import torch.nn.functional as F
 
 
-def l1_loss(network_output, gt):
-    return torch.abs((network_output - gt)).mean()
+def l1_loss(network_output, gt, pixel_subset_size=None):
+    if pixel_subset_size is not None:
+        return (torch.abs((network_output - gt)).sum())/pixel_subset_size
+    else:
+        return torch.abs((network_output - gt)).mean()
+
+def l1_loss_sky(network_output, gt, num_sky_pixels = None):
+    if num_sky_pixels is None:
+        return -1
+    else:
+        return (torch.abs((network_output - gt)).sum())/num_sky_pixels
 
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
@@ -79,6 +89,20 @@ def zero_one_loss(img):
     zero_epsilon = 1e-3
     val = torch.clamp(img, zero_epsilon, 1 - zero_epsilon)
     loss = torch.mean(torch.log(val) + torch.log(1 - val))
+    return loss
+
+def predicted_depth_loss(depth_map, sky_mask=None):
+    sky_mask = 1 - sky_mask
+    num_sky_pixels = torch.sum(sky_mask == 1)
+    if sky_mask is not None:
+        sky_mask = sky_mask.expand_as(depth_map)
+        depth_map = depth_map*sky_mask
+    with torch.no_grad():
+        avg_depth_map = depth_map.permute(1,2,0).data.clone().cpu().numpy()
+        avg_depth_map = cv2.blur(avg_depth_map.astype(np.float32),(5,5))
+    loss = (((depth_map.permute(1,2,0) - torch.tensor(avg_depth_map).cuda())**2).sum(dim=-1))
+    loss = torch.sum(loss)/num_sky_pixels
+
     return loss
 
 def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):

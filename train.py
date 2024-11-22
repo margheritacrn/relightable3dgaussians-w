@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, delta_normal_loss, zero_one_loss, envlight_loss, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, l1_loss_sky, ssim, predicted_normal_loss, predicted_depth_loss, zero_one_loss, envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state
@@ -111,6 +111,11 @@ def training(cfg, testing_iterations, saving_iterations):
         # Loss
         Ll1 = l1_loss(image, gt_image)
         loss = (1.0 - cfg.optimizer.lambda_dssim) * Ll1 + cfg.optimizer.lambda_dssim * (1.0 - ssim(image, gt_image))
+        sky_mask = 1 - viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+        sky = image*(sky_mask)
+        gt_sky = gt_image*sky_mask
+        Ll1_sky = 0.4*l1_loss(sky, gt_sky, pixel_subset_size = torch.sum(sky_mask == 1))
+        loss += Ll1_sky
         # Normal loss
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
             normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask = viewpoint_cam.sky_mask.cuda())
@@ -130,10 +135,10 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.optimizer.lambda_scale > 0:
             scale_loss = min_scale_loss(radii, model.gaussians)
             loss += cfg.optimizer.lambda_scale*scale_loss
-        # Distortion loss
-        if cfg.optimizer.lambda_dist > 0:
-            dist_loss = cfg.optimizer.lambda_dist*(render_pkg["rendered_distance"]).mean()
-            loss += cfg.optimizer.lambda_dist*dist_loss 
+        # Depth loss
+        if cfg.optimizer.lambda_depth > 0 and iteration > cfg.optimizer.reg_depth_from_iter:
+            depth_loss = predicted_depth_loss(render_pkg["depth"], sky_mask = viewpoint_cam.sky_mask.cuda())
+            loss += cfg.optimizer.lambda_depth*depth_loss 
         loss.backward()
 
         iter_end.record()
@@ -303,7 +308,7 @@ if __name__ == "__main__":
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--num_sky_points", type=int, default=15_000)
+    parser.add_argument("--num_sky_points", type=int, default=0)
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
