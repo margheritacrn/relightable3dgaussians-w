@@ -625,9 +625,12 @@ class GaussianModel:
         new_specular = self._specular[selected_pts_mask]
         new_normal = self._normal[selected_pts_mask]
         new_normal2 = self._normal2[selected_pts_mask]
-
-        normals = self.get_normal(dir_pp_normalized=viewing_dir)
+        
+        """
+        with torch.no_grad():
+            normals = self.get_normal(dir_pp_normalized=viewing_dir)
         new_xyz += grads[selected_pts_mask]*normals[selected_pts_mask]
+        """
 
         self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_specular, new_normal, new_normal2)

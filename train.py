@@ -114,7 +114,7 @@ def training(cfg, testing_iterations, saving_iterations):
         sky_mask = 1 - viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
         sky = image*(sky_mask)
         gt_sky = gt_image*sky_mask
-        Ll1_sky = 0.4*l1_loss(sky, gt_sky, pixel_subset_size = torch.sum(sky_mask == 1))
+        Ll1_sky = 0.2*l1_loss(sky, gt_sky, pixel_subset_size = torch.sum(sky_mask == 1))
         loss += Ll1_sky
         # Normal loss
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:

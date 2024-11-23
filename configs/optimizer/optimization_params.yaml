@@ -22,7 +22,7 @@ specular_lr: 0.0002
 roughness_lr: 0.0002
 metalness_lr: 0.0002
 albedo_lr: 0.0002
-reg_normal_from_iter: 15_000 # if from the beginnig depth not learned correctly
+reg_normal_from_iter: 0 #15_000 # if from the beginnig depth not learned correctly
 normal_reg_util_iter: 0 # 30_000
 lambda_dist: 0 #1, 10
 lambda_normal: 0.05 # 1e-1 #2e-1
