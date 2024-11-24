@@ -118,7 +118,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
 
         albedo = pc.get_albedo # (N, 3)
-        normal, delta_normal = pc.get_normal(dir_pp_normalized=viewing_dirs_normalized, return_delta=True) # (N, 3) 
+        normal, delta_normal = pc.get_normal(dir_pp_normalized=viewing_dirs_normalized, return_delta=True) # (N, 3)
         delta_normal_norm = delta_normal.norm(dim=1, keepdim=True)
         roughness = pc.get_roughness # (N, 1) 
         metalness = pc.get_metalness # (N,1)

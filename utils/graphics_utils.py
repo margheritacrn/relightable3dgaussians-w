@@ -152,8 +152,7 @@ def depths_to_points(view, depthmap):
     points = torch.stack([grid_x, grid_y, torch.ones_like(grid_x)], dim=-1).reshape(-1, 3)
     rays_d = points @ intrins.inverse().T @ c2w[:3,:3].T
     rays_o = c2w[:3,3]
-    d = depthmap.squeeze(0).reshape(-1, 1)
-    points = (d)* rays_d + rays_o
+    points = (depthmap.reshape(-1,3))* rays_d + rays_o
     return points
 
 def depth_to_normal(view, depth):
