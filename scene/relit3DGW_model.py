@@ -52,6 +52,8 @@ class Relightable3DGW:
                 self.test_cameras = self.scene.getTestCameras().copy()
             if self.config.num_sky_points > 0:
                 self.gaussians.extend_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
+            if self.config.num_ground_points > 0:
+                self.gaussians.extend_with_ground_gaussians(num_points = self.config.num_ground_points, cameras = self.train_cameras)
 
             self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
             self.envlight_sh_mlp.cuda()
@@ -228,7 +230,7 @@ class Relightable3DGW:
         self.envlight_sh_mlp.cuda()
 
 
-    def optimize_embeddings_test(self, mse=True):
+    def optimize_embeddings_test(self, mse=False):
         "Optimization of the images embeddings for the test set. Optimization is performed on left half of the test images."
         print(f"Optimizing test images embeddings on the left half of each image")
         # Initialize test embeddings:
@@ -260,8 +262,13 @@ class Relightable3DGW:
                 if mse:
                     loss = mse_loss(image_half, gt_image_half)
                 else:
-                    Ll1 = l1_loss(image_half, gt_image_half)
-                    loss = (1.0 - self.config.optimizer.lambda_dssim) * Ll1 + self.config.optimizer.lambda_dssim * (1.0 - ssim(image_half, gt_image_half))
+                    sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+                    sky_mask = get_half_images(img = sky_mask, left = True)
+                    Ll1_nosky = l1_loss(image_half*sky_mask, gt_image_half*sky_mask, pixel_subset_size = torch.sum(sky_mask == 1))
+                    l1_weight = (1.0 - self.config.optimizer.lambda_dssim) 
+                    sky_mask = 1 - sky_mask
+                    Ll1_sky = l1_loss(image_half*(sky_mask), gt_image_half*sky_mask, pixel_subset_size = torch.sum(sky_mask == 1))
+                    loss =  Ll1_nosky*(l1_weight*0.5) + (l1_weight*0.5)*Ll1_sky + self.config.optimizer.lambda_dssim *(1.0 - ssim(image_half, gt_image_half))
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad(set_to_none = True)
