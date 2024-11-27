@@ -16,7 +16,7 @@ from random import randint
 from utils.loss_utils import l1_loss, l1_loss_sky, ssim, predicted_normal_loss, predicted_depth_loss, zero_one_loss, envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
-from utils.general_utils import safe_state
+from utils.general_utils import safe_state, grad_thr_exp_scheduling
 from utils.image_utils import apply_depth_colormap
 import uuid
 from tqdm import tqdm
@@ -171,9 +171,13 @@ def training(cfg, testing_iterations, saving_iterations):
             if iteration < cfg.optimizer.densify_until_iter:
                 model.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
+                if iteration == cfg.optimizer.densify_from_iter:
+                    grad_threshold = cfg.optimizer.densify_grad_threshold
+
                 if iteration > cfg.optimizer.densify_from_iter and iteration % cfg.optimizer.densification_interval == 0:
                     size_threshold = 20 if iteration > cfg.optimizer.opacity_reset_interval else None
-                    model.gaussians.densify_and_prune(cfg.optimizer.densify_grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
+                    model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
+                    grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optmizer.densify_grad_threshold)
                 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
                     model.gaussians.reset_opacity()

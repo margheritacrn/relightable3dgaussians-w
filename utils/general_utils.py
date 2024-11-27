@@ -21,6 +21,10 @@ import math
 from torch.utils.data import TensorDataset
 
 
+def grad_thr_exp_scheduling(iter, max_iter, grad_thr_start, grad_thr_end=0.0004):
+    return np.exp(np.log(grad_thr_start)*(1-iter/max_iter)+np.log(grad_thr_end)*(iter/max_iter))
+
+
 def inverse_sigmoid(x):
     return torch.log(x/(1-x))
 

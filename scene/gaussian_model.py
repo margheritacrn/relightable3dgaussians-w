@@ -20,8 +20,9 @@ from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci
+from utils.graphics_utils import getWorld2View2
 import open3d as o3d
-# TODO: here I think that I don´t need the lightnet, because is per image not per Gaussian
+
 
 class GaussianModel:
     def __init__(self, sh_degree : int):
@@ -73,28 +74,34 @@ class GaussianModel:
 
         self.rotation_activation = torch.nn.functional.normalize
 
+
     @property
     def get_scaling(self):
         return self.scaling_activation(self._scaling)
-    
+
+
     @property
     def get_rotation(self):
         return self.rotation_activation(self._rotation)
-    
+
+
     @property
     def get_xyz(self):
         return self._xyz
-    
+
+
     @property
     def get_features(self):
         albedo = self._albedo
         features_rest = self._features_rest
         return torch.cat((albedo, features_rest), dim=1)
-    
+
+
     @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
-    
+
+
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
     
@@ -110,51 +117,40 @@ class GaussianModel:
             return normal_axis
 
 
-    def get_normal_original(self, dir_pp_normalized=None, return_delta=False):
-        normal_axis = self.get_minimum_axis
-        normal_axis = normal_axis
-        normal_axis, positive = flip_align_view(normal_axis, dir_pp_normalized)
-        delta_normal1 = self._normal  # (N, 3) 
-        delta_normal2 = self._normal2 # (N, 3) 
-        delta_normal = torch.stack([delta_normal1, delta_normal2], dim=-1) # (N, 3, 2)
-        idx = torch.where(positive, 0, 1).long()[:,None,:].repeat(1, 3, 1) # (N, 3, 1)
-        delta_normal = torch.gather(delta_normal, index=idx, dim=-1).squeeze(-1) # (N, 3)
-        normal = delta_normal + normal_axis 
-        normal = normal/normal.norm(dim=1, keepdim=True) # (N, 3)
-        if return_delta:
-            return normal, delta_normal
-        else:
-            return normal
-
-
     @property
     def get_specular(self):
         return self.specular_activation(self._specular)
-    
+
 
     @property
     def get_albedo(self):
         return self.albedo_activation(self._albedo)
 
+
     @property
     def get_metalness(self):
         return self.metalness_activation(self._metalness)
+
 
     @property
     def get_roughness(self):
         return self.roughness_activation(self._roughness + self.roughness_bias)
 
+
     @property
     def get_features_rest(self):
         return self._features_rest
+
 
     @property
     def get_minimum_axis(self):
         return get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
 
+
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
+
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = 5
@@ -215,7 +211,6 @@ class GaussianModel:
             gmask[torch.logical_not(gmask)] = torch.logical_or(gmask[torch.logical_not(gmask)], mask)
 
         return points[gmask], sky_distance
-
 
 
     @torch.no_grad()
@@ -281,7 +276,7 @@ class GaussianModel:
 
 
     def extend_with_sky_gaussians(self, num_points: int, cameras):
-        sky_xyz, sky_distance = self.get_sky_xyz(num_points, cameras)
+        sky_xyz, _ = self.get_sky_xyz(num_points, cameras)
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
 
         self._xyz = nn.Parameter(torch.cat([self._xyz, sky_xyz], dim=0).requires_grad_(True))
@@ -320,8 +315,7 @@ class GaussianModel:
         sky_f_rest = torch.zeros((sky_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
         self._features_rest = nn.Parameter(torch.cat([self._features_rest, sky_f_rest]))
 
-
-
+    #TODO: remove self.normal2 and fetures_rest
     def training_setup(self, envlight, embeddings, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -430,6 +424,7 @@ class GaussianModel:
             l.append('specular{}'.format(i))
         return l
 
+
     def save_ply(self, path, viewer_fmt=False):
         mkdir_p(os.path.dirname(path))
 
@@ -466,6 +461,7 @@ class GaussianModel:
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
+
 
     def load_ply(self, path, og_number_points=-1):
         self.og_number_points = og_number_points
@@ -528,6 +524,7 @@ class GaussianModel:
 
         self.active_sh_degree = self.max_sh_degree
 
+
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
@@ -544,6 +541,7 @@ class GaussianModel:
 
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
+
 
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
@@ -565,6 +563,7 @@ class GaussianModel:
                 optimizable_tensors[group["name"]] = group["params"][0]
         return optimizable_tensors
 
+
     def prune_points(self, mask):
         valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
@@ -585,6 +584,7 @@ class GaussianModel:
 
         self.denom = self.denom[valid_points_mask]
         self.max_radii2D = self.max_radii2D[valid_points_mask]
+
 
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
@@ -609,6 +609,7 @@ class GaussianModel:
                 optimizable_tensors[group["name"]] = group["params"][0]
 
         return optimizable_tensors
+
 
     def densification_postfix(self, new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, \
                               new_roughness, new_metalness, new_specular, new_normal, new_normal2):
@@ -639,6 +640,7 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
         n_init_points = self.get_xyz.shape[0]
@@ -676,6 +678,7 @@ class GaussianModel:
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
+
     def densify_and_clone(self, grads, grad_threshold, scene_extent, viewing_dir):
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
@@ -703,6 +706,7 @@ class GaussianModel:
         self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_specular, new_normal, new_normal2)
 
+
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, viewing_dir):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
@@ -719,9 +723,25 @@ class GaussianModel:
 
         torch.cuda.empty_cache()
 
+
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
-    
+
+
     def set_requires_grad(self, attrib_name, state: bool):
         getattr(self, f"_{attrib_name}").requires_grad = state
+
+    
+    def get_scene_extent(self, cams_info):
+        points = self.get_xyz
+        cam_centers = []
+        for cam in cams_info:
+            W2C = getWorld2View2(cam.R, cam.T)
+            C2W = np.linalg.inv(W2C)
+            cam_centers.append(C2W[:3, 3:4])
+        cam_centers = np.hstack(cam_centers)
+        avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
+        distances = np.linalg.norm(avg_cam_center-points, axis=0, keepdims=True)
+        scene_extent = 1.1*np.mean(distances)
+        return scene_extent

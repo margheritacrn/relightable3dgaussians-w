@@ -30,12 +30,6 @@ def l1_loss(network_output, gt, pixel_subset_size=None):
     else:
         return torch.abs((network_output - gt)).mean()
 
-def l1_loss_sky(network_output, gt, num_sky_pixels = None):
-    if num_sky_pixels is None:
-        return -1
-    else:
-        return (torch.abs((network_output - gt)).sum())/num_sky_pixels
-
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
 
