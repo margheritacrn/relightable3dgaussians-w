@@ -99,10 +99,11 @@ class GaussianModel:
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
     
     #TODO. remove return_delta, it's here not to edit gaussian_renderer module.
-    def get_normal(self, dir_pp_normalized=None, return_delta=False):
+    def get_normal(self, dir_pp_normalized=None, return_delta=False, normalize=False):
         normal_axis = self.get_minimum_axis
         normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
-        # normal = normal_axis/normal_axis.norm(dim=1, keepdim=True) # (N, 3)
+        if normalize:
+            normal_axis = torch.nn.functional.normalize(normal_axis, p=2, dim=1)
         if return_delta:
             return normal_axis, normal_axis
         else:
@@ -213,11 +214,74 @@ class GaussianModel:
             mask = torch.logical_and(mask, uv[..., -1] < 2/3 * cam.image_height)
             gmask[torch.logical_not(gmask)] = torch.logical_or(gmask[torch.logical_not(gmask)], mask)
 
-        return points[gmask], sky_distance / 2
+        return points[gmask], sky_distance
+
+
+
+    @torch.no_grad()
+    def get_ground_xyz(self, num_points: int, cameras):
+        """Adapted from https://arxiv.org/abs/2407.08447"""
+        points = get_uniform_points_on_sphere_fibonacci(num_points)
+        points = points.to("cuda")
+        mean = self._xyz.mean(0)[None]
+        ground_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.5)
+        points = points * ground_distance
+        points = points + mean
+        gmask = torch.zeros((points.shape[0],), dtype=torch.bool, device=points.device)
+        for cam in cameras:
+            uv = cam.project(points[torch.logical_not(gmask)])
+            mask = torch.logical_not(torch.isnan(uv).any(-1))
+            # Only bottom 1/3 of the image
+            assert cam.image_width is not None and cam.image_height is not None
+            mask = torch.logical_and(mask, uv[..., -1] > 1/3 * cam.image_height)
+            gmask[torch.logical_not(gmask)] = torch.logical_or(gmask[torch.logical_not(gmask)], mask)
+
+        return points[gmask], ground_distance / 2
+
+
+    def extend_with_ground_gaussians(self, num_points: int, cameras):
+        ground_xyz, _ = self.get_ground_xyz(num_points, cameras)
+        print(f"Adding {ground_xyz.shape[0]} ground Gaussians")
+
+        self._xyz = nn.Parameter(torch.cat([self._xyz, ground_xyz], dim=0).requires_grad_(True))
+
+        ground_albedo = 0.5*torch.ones((ground_xyz.shape[0], 3), device=self._albedo.device, requires_grad=True)
+        self._albedo = nn.Parameter(torch.cat([self._albedo, ground_albedo], dim=0))
+
+        ground_specular = torch.zeros((ground_xyz.shape[0], 3), device=self._specular.device, requires_grad=True)
+        self._specular = nn.Parameter(torch.cat([self._specular, ground_specular], dim=0))
+
+        ground_metalness = torch.zeros((ground_xyz.shape[0], 1), device=self._metalness.device, requires_grad=True)
+        self._metalness = nn.Parameter(torch.cat([self._metalness, ground_metalness], dim=0))
+
+        ground_roughness = torch.zeros((ground_xyz.shape[0], 1), device=self._roughness.device, requires_grad=True)
+        self._roughness = nn.Parameter(torch.cat([self._roughness, ground_roughness], dim=0))
+
+        ground_normals = torch.from_numpy(np.zeros((ground_xyz.shape[0], 3), dtype=np.float32)).to(self._normal.device).requires_grad_(True)
+        self._normal = nn.Parameter(torch.cat([self._normal, ground_normals], dim=0))
+
+        ground_normals2 = torch.zeros_like(ground_normals)
+        self._normal2 = nn.Parameter(torch.cat([self._normal2, ground_normals2], dim=0))
+
+        ground_opacity = torch.ones((ground_xyz.shape[0], 1), device=self._opacity.device, requires_grad=True)
+        self._opacity = nn.Parameter(torch.cat([self._opacity, ground_opacity]))
+
+        dist2 = torch.clamp_min(distCUDA2(ground_xyz.float().cuda()), 0.0000001)
+        ground_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
+        ground_rots = torch.zeros((ground_xyz.shape[0], 4), device=self._rotation.device)
+        ground_rots[:, 0] = 1
+        self._rotation = nn.Parameter(torch.cat([self._rotation, ground_rots.requires_grad_(True)], dim=0))
+        self._scaling = nn.Parameter(torch.cat([self._scaling, ground_scales.requires_grad_(True)]))
+        ground_max_radii2D = torch.zeros((ground_xyz.shape[0]), device=self.max_radii2D.device)
+        self.max_radii2D = nn.Parameter(torch.cat([self.max_radii2D, ground_max_radii2D]))
+
+        #TODO: remove feature_rest
+        ground_f_rest = torch.zeros((ground_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
+        self._features_rest = nn.Parameter(torch.cat([self._features_rest, ground_f_rest]))
 
 
     def extend_with_sky_gaussians(self, num_points: int, cameras):
-        sky_xyz, _ = self.get_sky_xyz(num_points, cameras)
+        sky_xyz, sky_distance = self.get_sky_xyz(num_points, cameras)
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
 
         self._xyz = nn.Parameter(torch.cat([self._xyz, sky_xyz], dim=0).requires_grad_(True))
@@ -255,6 +319,7 @@ class GaussianModel:
         #TODO: remove feature_rest
         sky_f_rest = torch.zeros((sky_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
         self._features_rest = nn.Parameter(torch.cat([self._features_rest, sky_f_rest]))
+
 
 
     def training_setup(self, envlight, embeddings, training_args):
@@ -586,11 +651,15 @@ class GaussianModel:
         if torch.sum(selected_pts_mask) == 0:
             return
 
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1)
-        means =torch.zeros((stds.size(0), 3),device="cuda")
+        stds = self.get_scaling[selected_pts_mask].repeat(N,1) # (n,3)
+        stds, sorted_idx = torch.sort(stds, dim=1, descending=True)
+        stds = stds[:,:2]
+        means =torch.zeros((stds.size(0), 2),device="cuda") # 2 for norml
         samples = torch.normal(mean=means, std=stds)
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1) # sample from gaussian dist
+        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1) # (n*N, 3, 3)
+        rots = torch.gather(rots, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
+        new_xyz = torch.bmm(rots[:,:,:2], samples.unsqueeze(-1)).squeeze(-1) +  self.get_xyz[selected_pts_mask].repeat(N, 1)
+        # new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1) # sample from gaussian dist
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_albedo = self._albedo[selected_pts_mask].repeat(N,1)
@@ -627,8 +696,9 @@ class GaussianModel:
         new_normal2 = self._normal2[selected_pts_mask]
 
         with torch.no_grad():
-            normals = self.get_normal(dir_pp_normalized=viewing_dir)
+            normals = self.get_normal(dir_pp_normalized=viewing_dir, normalize=True)
         new_xyz += grads[selected_pts_mask]*normals[selected_pts_mask]
+
 
         self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_specular, new_normal, new_normal2)
