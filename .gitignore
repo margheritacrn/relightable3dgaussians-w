@@ -8,6 +8,6 @@ output*
 **/build
 *.egg-info
 build_submodules.sh
-submodules_PGSR
+submodules_*
 *.dump
 gaussian_renderer/initpgsr.py
