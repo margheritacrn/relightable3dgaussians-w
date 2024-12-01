@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, l1_loss_sky, ssim, predicted_normal_loss, predicted_depth_loss, zero_one_loss, envlight_loss, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -110,16 +110,26 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Loss
         Ll1 = l1_loss(image, gt_image)
+        """
+        n_tot_pixels = gt_image.shape[0]*gt_image.shape[1]*gt_image.shape[2]
         # Phtometric loss- no sky
         sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-        Ll1_nosky = l1_loss(image*sky_mask, gt_image*sky_mask, pixel_subset_size = torch.sum(sky_mask == 1))
-        l1_weight = (1.0 - cfg.optimizer.lambda_dssim) 
+        n_no_sky_pixels = torch.sum(sky_mask == 1)
+        l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
+        Ll1_nosky = l1_loss(image*sky_mask, gt_image*sky_mask, pixel_subset_size = n_no_sky_pixels)
         # Photometric loss- sky
         sky_mask = 1 - sky_mask
-        Ll1_sky = l1_loss(image*(sky_mask), gt_image*sky_mask, pixel_subset_size = torch.sum(sky_mask == 1))
-        loss =  Ll1_nosky*(l1_weight*0.5) + (l1_weight*0.5)*Ll1_sky + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
+        n_sky_pixels = torch.sum(sky_mask == 1)
+        l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
+        if l1_sky_weight == 0:
+            Ll1_sky = 0
+        else:
+            Ll1_sky = l1_loss(image*(sky_mask), gt_image*sky_mask, pixel_subset_size = n_sky_pixels)
+        loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
+        """
+        loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image)) ###
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask = viewpoint_cam.sky_mask.cuda())
+            normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask=viewpoint_cam.sky_mask.cuda())
             loss += cfg.optimizer.lambda_normal*normal_loss
         # Envlight losses
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
@@ -136,10 +146,13 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.optimizer.lambda_scale > 0:
             scale_loss = min_scale_loss(radii, model.gaussians)
             loss += cfg.optimizer.lambda_scale*scale_loss
-        # Depth loss
-        if cfg.optimizer.lambda_depth > 0 and iteration > cfg.optimizer.reg_depth_from_iter:
-            depth_loss = predicted_depth_loss(render_pkg["depth"], sky_mask = viewpoint_cam.sky_mask.cuda())
-            loss += cfg.optimizer.lambda_depth*depth_loss 
+        # Depth regularization
+        if cfg.optimizer.lambda_depth > 0:
+            sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=viewpoint_cam.sky_mask.cuda())
+            loss += cfg.optimizer.lambda_depth*sky_depth_loss_ 
+        if iteration > cfg.optimizer.reg_depth_from_iter:
+                depth_loss = predicted_depth_loss(render_pkg["depth"], sky_mask=viewpoint_cam.sky_mask.cuda())
+                loss += cfg.optimizer.lambda_depth*depth_loss 
         loss.backward()
 
         iter_end.record()
@@ -177,7 +190,7 @@ def training(cfg, testing_iterations, saving_iterations):
                 if iteration > cfg.optimizer.densify_from_iter and iteration % cfg.optimizer.densification_interval == 0:
                     size_threshold = 20 if iteration > cfg.optimizer.opacity_reset_interval else None
                     model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
-                    grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optmizer.densify_grad_threshold)
+                    grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optimizer.densify_grad_threshold)
                 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
                     model.gaussians.reset_opacity()
