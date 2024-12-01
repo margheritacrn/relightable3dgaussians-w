@@ -23,7 +23,7 @@ from argparse import ArgumentParser
 import numpy as np
 
 
-def readImages(renders_dir, gt_dir, masks_path=None):
+def readImages(renders_dir, gt_dir, masks_path=None, sky_masks_path=None):
     renders = []
     gts = []
     image_names = []
@@ -33,6 +33,10 @@ def readImages(renders_dir, gt_dir, masks_path=None):
         render = tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda()
         gt = Image.open(gt_dir / fname)
         gt = tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda()
+        if sky_masks_path is not None:
+            sky_mask_path = os.path.join(sky_masks_path, fname[:-4] + "_mask.png")
+            sky_mask = Image.open(sky_mask_path).convert("L")
+            sky_mask = tf.to_tensor(sky_mask).cuda()
         if masks_path is not None:
             mask_path = os.path.join(masks_path, fname)
             mask = Image.open(mask_path).convert("L")
@@ -47,8 +51,8 @@ def readImages(renders_dir, gt_dir, masks_path=None):
                 discarded_samples += 1
                 continue
             mask = mask.expand_as(gt)
-            renders.append(gt*mask)
-            gts.append(render*mask)
+            renders.append((gt*mask)*sky_mask)
+            gts.append((render*mask)*sky_mask)
         else:
             renders.append(gt)
             gts.append(render)
@@ -57,7 +61,7 @@ def readImages(renders_dir, gt_dir, masks_path=None):
     return renders, gts, image_names
 
 
-def evaluate_half(model_paths, mask_path=None):
+def evaluate_half(model_paths, masks_path=None, sky_masks_path=None):
 
     full_dict = {}
     per_view_dict = {}
@@ -85,7 +89,7 @@ def evaluate_half(model_paths, mask_path=None):
             method_dir = test_dir / method
             gt_dir = method_dir/ "gt"
             renders_dir = method_dir / "renders"
-            renders, gts, image_names = readImages(renders_dir, gt_dir, mask_path)
+            renders, gts, image_names = readImages(renders_dir, gt_dir, masks_path, sky_masks_path)
 
             ssims = []
             psnrs = []
@@ -122,6 +126,7 @@ if __name__ == "__main__":
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
     parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
-    parser.add_argument('--mask_path', type=str)
+    parser.add_argument('--masks_path', type=str)
+    parser.add_argument('--sky_masks_path', type=str)
     args = parser.parse_args()
-    evaluate_half(args.model_paths, args.mask_path)
+    evaluate_half(args.model_paths, args.masks_path, args.sky_masks_path)
