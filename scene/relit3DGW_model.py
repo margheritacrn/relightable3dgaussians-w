@@ -15,7 +15,7 @@ from utils.system_utils import mkdir_p
 from utils.general_utils import get_half_images
 from torch.utils.data import TensorDataset, DataLoader
 from gaussian_renderer import render
-from utils.loss_utils import l1_loss, ssim
+from utils.loss_utils import l1_loss, ssim, sky_depth_loss
 from PIL import Image
 from random import randint
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
@@ -54,7 +54,7 @@ class Relightable3DGW:
                 self.gaussians.extend_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
             if self.config.num_ground_points > 0:
                 self.gaussians.extend_with_ground_gaussians(num_points = self.config.num_ground_points, cameras = self.train_cameras)
-
+            # self.scene.cameras_extent = self.gaussians.get_scene_extent(self.train_cameras)
             self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
             self.envlight_sh_mlp.cuda()
             if self.config.optimizer.lambda_envlight_sh_prior > 0 or self.config.init_sh_mlp:
@@ -123,7 +123,7 @@ class Relightable3DGW:
         print("Initializing SH MLP")
         viewpoint_stack = self.scene.getTrainCameras().copy()
         imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid]).to(dtype=torch.long, device='cuda')).detach() for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
-        lighting_conditions = [viewpoint_cam.image_name[:-9] for viewpoint_cam in viewpoint_stack]
+        lighting_conditions = [viewpoint_cam.image_name[:-9] if viewpoint_cam.image_name[0] != "C" else viewpoint_cam.image_name[:-3] for viewpoint_cam in viewpoint_stack]
         sh_priors_keys = [next((key for key in self.envlight_sh_priors if lc in key), None) for lc in lighting_conditions]
         target_sh = torch.stack([torch.tensor(self.envlight_sh_priors[key], dtype=torch.float32) for key in sh_priors_keys ])
         train_data = TensorDataset(imgs, target_sh)
@@ -230,7 +230,7 @@ class Relightable3DGW:
         self.envlight_sh_mlp.cuda()
 
 
-    def optimize_embeddings_test(self, mse=False):
+    def optimize_embeddings_test(self, mse=False, sky_l1_loss=False):
         "Optimization of the images embeddings for the test set. Optimization is performed on left half of the test images."
         print(f"Optimizing test images embeddings on the left half of each image")
         # Initialize test embeddings:
@@ -252,23 +252,35 @@ class Relightable3DGW:
                 gt_image = viewpoint_cam.original_image.cuda()
                 gt_image_half =  get_half_images(img = gt_image, left = True)
                 # Update width:
-                viewpoint_cam.image_width = viewpoint_cam.image_width // 2
+                # viewpoint_cam.image_width = viewpoint_cam.image_width // 2
                 embedding_gt_image_half = self.embeddings_test(viewpoint_cam_id)
                 envlight_sh = self.envlight_sh_mlp(embedding_gt_image_half)
                 self.envlight.set_base(envlight_sh)
                 render_pkg = render(viewpoint_cam, self.gaussians, self.envlight, self.config.pipe, background, debug=False)
-                viewpoint_cam.image_width = viewpoint_cam.image_width*2
-                image_half = render_pkg["render"]
+                # viewpoint_cam.image_width = viewpoint_cam.image_width*2
+                image_half = get_half_images(img=render_pkg["render"], left=True)
+                depth_half = get_half_images(img=render_pkg["depth"], left=True)
                 if mse:
                     loss = mse_loss(image_half, gt_image_half)
-                else:
-                    sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-                    sky_mask = get_half_images(img = sky_mask, left = True)
-                    Ll1_nosky = l1_loss(image_half*sky_mask, gt_image_half*sky_mask, pixel_subset_size = torch.sum(sky_mask == 1))
-                    l1_weight = (1.0 - self.config.optimizer.lambda_dssim) 
-                    sky_mask = 1 - sky_mask
-                    Ll1_sky = l1_loss(image_half*(sky_mask), gt_image_half*sky_mask, pixel_subset_size = torch.sum(sky_mask == 1))
-                    loss =  Ll1_nosky*(l1_weight*0.5) + (l1_weight*0.5)*Ll1_sky + self.config.optimizer.lambda_dssim *(1.0 - ssim(image_half, gt_image_half))
+                elif not sky_l1_loss:
+                    nosky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+                    nosky_mask = get_half_images(img = nosky_mask, left = True)
+                    loss = (1 - self.config.optimizer.lambda_dssim)*l1_loss(image_half, gt_image_half) + self.config.optimizer.lambda_dssim *(1.0 - ssim(image_half, gt_image_half)) + self.config.optimizer.lambda_depth*sky_depth_loss(depth_half, sky_mask=nosky_mask)
+                else: 
+                    n_tot_pixels = gt_image_half.shape[0]*gt_image_half.shape[1]*gt_image_half.shape[2]
+                    nosky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+                    nosky_mask = get_half_images(img = sky_mask, left = True)
+                    n_no_sky_pixels = torch.sum(nosky_mask == 1)
+                    l1_no_sky_weight = (1.0 - self.config.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
+                    Ll1_nosky = l1_loss(image_half*nosky_mask, gt_image_half*nosky_mask, pixel_subset_size = n_no_sky_pixels)
+                    sky_mask = 1 - nosky_mask
+                    n_sky_pixels = torch.sum(sky_mask == 1)
+                    l1_sky_weight = (1.0 - self.config.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
+                    if l1_sky_weight == 0:
+                        Ll1_sky = 0
+                    else:
+                        Ll1_sky = l1_loss(image_half*(sky_mask), gt_image_half*sky_mask, pixel_subset_size = n_sky_pixels)
+                    loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + self.config.optimizer.lambda_dssim *(1.0 - ssim(image_half, gt_image_half)) +  self.config.optimizer.lambda_depth*sky_depth_loss(depth_half, sky_mask=nosky_mask) 
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad(set_to_none = True)
