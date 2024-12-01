@@ -11,7 +11,7 @@
 import os
 from argparse import ArgumentParser
 
-nerfosr_scenes = ["schloss", "lwp"]
+nerfosr_scenes = ["lk2", "schloss", "lwp"]
 
 parser = ArgumentParser(description="Full evaluation script parameters")
 parser.add_argument("--skip_training", action="store_true")
