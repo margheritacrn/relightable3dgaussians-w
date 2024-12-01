@@ -86,7 +86,6 @@ def zero_one_loss(img):
     return loss
 
 def predicted_depth_loss(depth_map, sky_mask=None):
-    # sky_mask = 1 - sky_mask
     with torch.no_grad():
         avg_depth_map = depth_map.permute(1,2,0).data.clone().cpu().numpy()
         avg_depth_map = cv2.blur(avg_depth_map.astype(np.float32),(5,5))
