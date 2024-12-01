@@ -45,7 +45,7 @@ class Scene:
         self.test_cameras = {}
 
         #TODO: fix here
-        if "nerfosr" in args.source_path.lower() and os.path.exists(os.path.join(args.source_path, "sparse")):
+        if "nerfosr" in args.source_path.lower() or os.path.exists(os.path.join(args.source_path, "sparse")):
            scene_info = sceneLoadTypeCallbacks["NerfOSR"](args.source_path, args.images, args.eval)
         elif os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
@@ -75,7 +75,6 @@ class Scene:
             random.shuffle(scene_info.test_cameras)  # Multi-res consistent random shuffling
 
         self.cameras_extent = scene_info.nerf_normalization["radius"]
-        self.cameras_extent = self.gaussians.get_scene_extent(scene_info.train_cameras)
 
         for resolution_scale in resolution_scales:
             print("Loading Training Cameras")
