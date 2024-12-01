@@ -735,6 +735,7 @@ class GaussianModel:
     
     def get_scene_extent(self, cams_info):
         points = self.get_xyz
+        points = points.detach().cpu().numpy()
         cam_centers = []
         for cam in cams_info:
             W2C = getWorld2View2(cam.R, cam.T)
@@ -742,6 +743,6 @@ class GaussianModel:
             cam_centers.append(C2W[:3, 3:4])
         cam_centers = np.hstack(cam_centers)
         avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
-        distances = np.linalg.norm(avg_cam_center-points, axis=0, keepdims=True)
-        scene_extent = 1.1*np.mean(distances)
+        distances = np.linalg.norm(avg_cam_center.transpose() - points, axis=0, keepdims=True)
+        scene_extent =  np.mean(distances)
         return scene_extent
