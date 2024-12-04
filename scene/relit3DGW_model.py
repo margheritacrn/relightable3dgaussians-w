@@ -118,12 +118,11 @@ class Relightable3DGW:
         else:
             self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
 
-
     def initialize_sh_mlp(self):
         print("Initializing SH MLP")
         viewpoint_stack = self.scene.getTrainCameras().copy()
         imgs = torch.stack([self.embeddings(torch.tensor([viewpoint_cam.uid]).to(dtype=torch.long, device='cuda')).detach() for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
-        lighting_conditions = [viewpoint_cam.image_name[:-9] if viewpoint_cam.image_name[0] != "C" else viewpoint_cam.image_name[:-3] for viewpoint_cam in viewpoint_stack]
+        lighting_conditions = [viewpoint_cam.image_name[:-9] if viewpoint_cam.image_name[0] != "C" else viewpoint_cam.image_name[:3] for viewpoint_cam in viewpoint_stack]
         sh_priors_keys = [next((key for key in self.envlight_sh_priors if lc in key), None) for lc in lighting_conditions]
         target_sh = torch.stack([torch.tensor(self.envlight_sh_priors[key], dtype=torch.float32) for key in sh_priors_keys ])
         train_data = TensorDataset(imgs, target_sh)
