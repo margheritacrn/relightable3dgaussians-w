@@ -125,8 +125,8 @@ if __name__ == "__main__":
 
     # Set up command line argument parser
     parser = ArgumentParser(description="Training script parameters")
-    parser.add_argument('--model_paths', '-m', required=True, nargs="+", type=str, default=[])
+    parser.add_argument('--model_path', '-m', required=True, nargs="+", type=str, default=[])
     parser.add_argument('--masks_path', type=str)
     parser.add_argument('--sky_masks_path', type=str)
     args = parser.parse_args()
-    evaluate_half(args.model_paths, args.masks_path, args.sky_masks_path)
+    evaluate_half(args.model_path, args.masks_path, args.sky_masks_path)
