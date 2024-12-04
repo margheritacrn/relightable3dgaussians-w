@@ -151,7 +151,7 @@ def training(cfg, testing_iterations, saving_iterations):
             sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=viewpoint_cam.sky_mask.cuda())
             loss += cfg.optimizer.lambda_depth*sky_depth_loss_ 
         if iteration > cfg.optimizer.reg_depth_from_iter:
-                depth_loss = predicted_depth_loss(render_pkg["depth"], sky_mask=viewpoint_cam.sky_mask.cuda())
+                depth_loss = predicted_depth_loss(render_pkg["depth"])
                 loss += cfg.optimizer.lambda_depth*depth_loss 
         loss.backward()
 
