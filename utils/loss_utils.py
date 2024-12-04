@@ -94,7 +94,7 @@ def predicted_depth_loss(depth_map, sky_mask=None):
         sky_mask = sky_mask.expand_as(depth_map)
         depth_map = depth_map*sky_mask
         avg_depth_map = avg_depth_map*sky_mask.permute(1,2,0)
-        loss = (((depth_map.permute(1,2,0) - avg_depth_map).abs()).sum(dim=-1))
+        loss = torch.abs(((depth_map.permute(1,2,0) - avg_depth_map))).sum()
         num_sky_pixels = torch.sum(sky_mask == 1)
         return torch.sum(loss)/num_sky_pixels
     else:
