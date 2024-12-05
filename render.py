@@ -28,7 +28,6 @@ import numpy as np
 from omegaconf import DictConfig
 from scene.relit3DGW_model import Relightable3DGW
 import hydra
-#TODO: handle loading model at input iteration
 
 
 def render_lightings(model_path, iteration, model):
@@ -41,9 +40,11 @@ def render_lightings(model_path, iteration, model):
 def render_set(model_path, name, iteration, views, model, pipeline, background):
     render_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "gt")
+    lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_envlights")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(lighting_path, exist_ok=True)
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         torch.cuda.synchronize()
@@ -76,6 +77,12 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             elif "normal" in k:
                 render_pkg[k] = 0.5 + (0.5*render_pkg[k])
             torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
+    print(f"{name}- rendering illuminations")
+    if name == "test":
+        model.render_envlights_sh_all(save_path=lighting_path, test = True, save_sh_coeffs=True)
+    else:
+        model.render_envlights_sh_all(save_path=lighting_path, test = False, save_sh_coeffs=True)
+
 
 def render_sets(cfg, skip_train : bool, skip_test : bool):
     with torch.no_grad():
@@ -91,7 +98,8 @@ def render_sets(cfg, skip_train : bool, skip_test : bool):
              model.optimize_embeddings_test()
              render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background)
 
-        render_lightings(model.config.dataset.model_path, model.load_iteration, model)
+        # render_lightings(model.config.dataset.model_path, model.load_iteration, model)
+
 
 def render_sets_training(model: Relightable3DGW, skip_train : bool, skip_test : bool):
     with torch.no_grad():
@@ -141,5 +149,3 @@ if __name__ == "__main__":
 
     sys.argv = [sys.argv[0]] + cl_args
     main()
-    # All done
-    print("\nRendering complete.")
