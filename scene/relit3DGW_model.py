@@ -154,22 +154,30 @@ class Relightable3DGW:
                 param_group['lr'] = 0.0001
 
 
-    def get_envlights_sh_all(self):
+    def get_envlights_sh_all(self, test=False):
         envlights_sh = {}
-        viewpoint_stack = self.scene.getTrainCameras().copy()
+        if test:
+            viewpoint_stack = self.scene.getTestCameras().copy()
+        else:
+            viewpoint_stack = self.scene.getTrainCameras().copy()
         torch.cuda.empty_cache()
         with torch.no_grad():
             for viewpoint_cam in viewpoint_stack:
                 viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
-                image_embed = self.embeddings(viewpoint_cam_id)
+                if test:
+                    image_embed = self.embeddings_test(viewpoint_cam_id)
+                else:
+                    image_embed = self.embeddings(viewpoint_cam_id)
                 envlights_sh[viewpoint_cam.image_name] = self.envlight_sh_mlp(image_embed).detach().cpu().numpy()
         return envlights_sh
     
 
-    def render_envlights_sh_all(self, save_path: str):
-        envlights_sh = self.get_envlights_sh_all()
+    def render_envlights_sh_all(self, save_path: str, test=False, save_sh_coeffs=False):
+        envlights_sh = self.get_envlights_sh_all(test)
         for im_name in envlights_sh.keys():
             self.envlight.set_base(envlights_sh[im_name])
+            if save_sh_coeffs:
+                np.save(os.path.join(save_path, im_name + ".npy"), self.envlight.base)
             rendered_sh = self.envlight.render_sh()
             rendered_img = Image.fromarray(rendered_sh)
             save_path_im = os.path.join(save_path, im_name + ".jpg")
