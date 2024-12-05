@@ -12,7 +12,7 @@ scaling_lr: 0.001
 rotation_lr: 0.001
 percent_dense: 0.01
 lambda_dssim: 0.2
-densification_interval: 1000 # 100
+densification_interval: 500 # 100, 1000
 opacity_reset_interval: 3000
 densify_from_iter: 500
 densify_until_iter: 15_000
@@ -30,6 +30,8 @@ reg_depth_from_iter: 15_000
 lambda_depth: 0.05
 lambda_delta_reg: 1e-3
 lambda_scale: 100.0
+# l1 loss type
+l1_loss_type: "sky_fixed_weight"
 # environment light 
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
@@ -40,4 +42,4 @@ envlight_loss_until_iter: 50_000
 # per-image embeddings
 embeddings_lr: 0.0002
 embednet_pretrain_epochs: 100
-optim_embeddings_test_iters: 1000
+optim_embeddings_test_iters: 100

@@ -110,23 +110,36 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Loss
         Ll1 = l1_loss(image, gt_image)
-        """
-        n_tot_pixels = gt_image.shape[0]*gt_image.shape[1]*gt_image.shape[2]
-        # Phtometric loss- no sky
-        sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-        n_no_sky_pixels = torch.sum(sky_mask == 1)
-        l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
-        Ll1_nosky = l1_loss(image*sky_mask, gt_image*sky_mask, pixel_subset_size = n_no_sky_pixels)
-        # Photometric loss- sky
-        sky_mask = 1 - sky_mask
-        n_sky_pixels = torch.sum(sky_mask == 1)
-        l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
-        if l1_sky_weight == 0:
-            Ll1_sky = 0
+        if cfg.optimizer.l1_loss_type == "sky_fixed_weight":
+            # Sky loss- weight equally sky and non-sky regions
+            sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+            skyonly_mask = 1 -sky_mask 
+            num_sky_pixels = torch.sum(skyonly_mask == 1)
+            l1_weight = (1-cfg.optimizer.lambda_dssim)
+            if num_sky_pixels > 0:
+                loss = l1_loss(image*skyonly_mask, gt_image*skyonly_mask)*(l1_weight/2) + l1_loss(image*sky_mask, gt_image*sky_mask)*(l1_weight/2) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
+            else:
+                loss = Ll1*l1_weight
+        elif cfg.optimizer.l1_loss_type == "sky_pixels_weight":
+            # Sky loss- weighiting by pixels num
+            n_tot_pixels = gt_image.shape[0]*gt_image.shape[1]*gt_image.shape[2]
+            # Phtometric loss- no sky
+            sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+            n_no_sky_pixels = torch.sum(sky_mask == 1)
+            l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
+            Ll1_nosky = l1_loss(image*sky_mask, gt_image*sky_mask, pixel_subset_size = n_no_sky_pixels)
+            # Photometric loss- sky
+            sky_mask = 1 - sky_mask
+            n_sky_pixels = torch.sum(sky_mask == 1)
+            l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
+            if l1_sky_weight == 0:
+                Ll1_sky = 0
+            else:
+                Ll1_sky = l1_loss(image*(sky_mask), gt_image*sky_mask, pixel_subset_size = n_sky_pixels)
         else:
-            Ll1_sky = l1_loss(image*(sky_mask), gt_image*sky_mask, pixel_subset_size = n_sky_pixels)
-        loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
-        """
+            loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
+        
+        # Classic loss 
         loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image)) ###
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
             normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask=viewpoint_cam.sky_mask.cuda())
