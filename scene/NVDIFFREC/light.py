@@ -5,7 +5,8 @@ import nvdiffrast.torch as dr
 from . import util
 from . import renderutils as ru
 from utils.general_utils import get_homogeneous
-from utils.sh_utils import gauss_weierstrass_kernel, eval_sh, sh_render
+from utils.sh_additional_utils import eval_sh, sh_render
+from utils.sh_utils import gauss_weierstrass_kernel
 #NOTE: I also need to load envlights that don't need training, so I should have base attribute not directly initialized to LightNet object
 #TODO: add dimensionality control to load_env function
 #TODO: decide wehteher to use equrectangular or cubemap representation/texture for envmaps.
