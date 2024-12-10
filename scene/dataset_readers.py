@@ -22,7 +22,8 @@ from pathlib import Path
 from plyfile import PlyData, PlyElement
 from utils.sh_utils import SH2RGB
 from scene.gaussian_model import BasicPointCloud
-#TODO: I could read from cam_dict.json the cameras and leave the .ply file.
+import pandas as pd
+
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -36,6 +37,7 @@ class CameraInfo(NamedTuple):
     image_path: str
     image_name: str
     sky_mask: np.array
+    occluders_mask: np.array
     width: int
     height: int
     normal_image: np.array
@@ -71,7 +73,7 @@ def getNerfppNorm(cam_info):
 
     return {"translate": translate, "radius": radius}
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_masks_folder, masks_extension):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_masks_folder, masks_extension, occluders_masks_folder):
     cam_infos = []
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
@@ -110,15 +112,20 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder, sky_masks_f
 
         image_path = os.path.join(images_folder, os.path.basename(extr.name))
         image_name = os.path.basename(image_path).split(".")[0]
-        sky_mask_path = os.path.join(sky_masks_folder, image_name+masks_extension)
+        sky_mask_path = os.path.join(sky_masks_folder, image_name + "_mask"+ masks_extension)
+        occluders_mask_path = os.path.join(occluders_masks_folder, image_name+ masks_extension)
         image = Image.open(image_path)
         if os.path.exists(sky_mask_path):
             sky_mask = Image.open(sky_mask_path).convert("L")
         else:
             sky_mask = None
+        if os.path.exists(occluders_mask_path):
+            occluders_mask = Image.open(occluders_mask_path).convert("L")
+        else:
+            occluders_mask = None
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, cx = cx, cy=cy, image=image,
-                              image_path=image_path, image_name=image_name, sky_mask=sky_mask, width=width, height=height, 
+                              image_path=image_path, image_name=image_name, sky_mask=sky_mask,  occluders_mask=occluders_mask, width=width, height=height, 
                               normal_image=None, alpha_mask=None)
         cam_infos.append(cam_info)
     sys.stdout.write('\n')
@@ -149,43 +156,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-
-def readNerfOSRCameras(path, cams_fname):
-    assert cams_fname[-4:] == 'json', "NeRF-OSR- camera parameters must be stored in .json file"
-    cam_infos = []
-    with open(os.path.join(path, cams_fname)) as json_file:
-        contents = json.load(json_file)
-        sys.stdout.write("Reading {} cameras".format(len(contents)))
-        sys.stdout.flush()
-        for idx, im_name in enumerate(contents.keys()):
-            image_path = os.path.join(path, f"rgb/{im_name}")
-            # read intrinsics
-            width = contents[im_name]['img_size'][0]
-            height = contents[im_name]['img_size'][1]
-            K = np.array(contents[im_name]['K']).reshape(4,4)
-            focal_length_x = K[0,0]
-            focal_length_y =  K[1,1]
-            cx = K[0,2]
-            cy = K[1,2]
-            FovY = focal2fov(focal_length_y, height)
-            FovX = focal2fov(focal_length_x, width)
-            # read extrinsics
-            w2c = np.array(contents[im_name]['W2C']).reshape(4,4)
-            c2w = getView2World(w2c[:3,:3], w2c[:3, 3])
-            R = c2w[:3,:3].transpose()
-            T = c2w[:3, 3]
-            image_name = os.path.basename(image_path).split(".")[0]
-            image = Image.open(image_path)
-
-            cam_info = CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, cx = cx, cy=cy, image=image,
-                                image_path=image_path, image_name=image_name, width=width, height=height, 
-                                normal_image=None, alpha_mask=None)
-            cam_infos.append(cam_info)
-    sys.stdout.write('\n')
-    return cam_infos   
-
-#TODO: fix here and fix probelm of the different extension
-def readNerfOsrInfo(path, images, eval, extension = ".jpg", masks_extension = "_mask.png"):
+def readNerfOsrInfo(path, images, eval, masks_extension = ".png"):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -199,15 +170,16 @@ def readNerfOsrInfo(path, images, eval, extension = ".jpg", masks_extension = "_
 
     reading_dir = "images" if images == None else images
     cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
-                                           sky_masks_folder=os.path.join(path, "sky_masks"), masks_extension=masks_extension)
+                                           sky_masks_folder=os.path.join(path, "sky_masks"), masks_extension=masks_extension,
+                                           occluders_masks_folder = os.path.join(path, "masks"))
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
-    train_images = os.listdir(path + "/train/rgb")
-    test_images = os.listdir(path + "/test/rgb")
+    train_images = [imagename.split(".")[0] for imagename in os.listdir(path + "/train/rgb")]
+    test_images = [imagename.split(".")[0] for imagename in os.listdir(path + "/test/rgb")]
 
     if eval:
-        train_cam_infos_unsorted = [c for c in cam_infos if c.image_name + extension in train_images]
-        test_cam_infos_unsorted = [c for c in cam_infos if c.image_name + ".JPG"in test_images]
+        train_cam_infos_unsorted = [c for c in cam_infos if c.image_name in train_images]
+        test_cam_infos_unsorted = [c for c in cam_infos if c.image_name in test_images]
     else:
         train_cam_infos_unsorted = cam_infos
         test_cam_infos = []
