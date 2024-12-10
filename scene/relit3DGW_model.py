@@ -18,8 +18,7 @@ from gaussian_renderer import render
 from utils.loss_utils import l1_loss, ssim, sky_depth_loss
 from PIL import Image
 from random import randint
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-#TODO: consider weather to refactor the class structre such that all the attributes are passed from the training script. This way I could properly initialize the output.
+#TODO: Update optimize_embeddings_test with l1loss differentiation (see optimizer config)
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
 class Relightable3DGW:
@@ -118,6 +117,7 @@ class Relightable3DGW:
         else:
             self.embeddings.weight = torch.nn.Parameter(F.normalize(embeddings_inits, p=2, dim=-1))
 
+
     def initialize_sh_mlp(self):
         print("Initializing SH MLP")
         viewpoint_stack = self.scene.getTrainCameras().copy()
@@ -194,13 +194,10 @@ class Relightable3DGW:
         model_path = self.config.dataset.model_path
         embeds_path = os.path.join(model_path, "checkpoint_embeddings/iteration_{}".format(iteration))
         os.makedirs(embeds_path, exist_ok=True)
-        # mkdir_p(os.path.dirname(os.path.join(embeds_path, "embeddings_weights.pth")))
         envlights_sh_path = os.path.join(model_path, "envlights_sh/iteration_{}".format(iteration))
         os.makedirs(envlights_sh_path, exist_ok=True)
-        #mkdir_p(os.path.dirname(envlights_sh_path))
         sh_mlp_path = os.path.join(model_path, "checkpoint_SHMlp/iteration_{}".format(iteration))
         os.makedirs(sh_mlp_path, exist_ok=True)
-        #mkdir_p(os.path.dirname(os.path.join(sh_mlp_path, "SHMlp_weights.pth")))
         print("Saving embeddings weights\n")
         torch.save(self.embeddings.weight, embeds_path + "/embeddings_weights.pth")
         print("Saving SH MLP weights\n")
@@ -214,7 +211,7 @@ class Relightable3DGW:
 
 
     def load_model(self):
-        """Load model at iteration self.load_iteration. Gaussians are loaded when initializing self.scene"""
+        """Load model at iteration self.load_iteration"""
         checkpoint_ply = os.path.join(self.config.dataset.model_path, f"point_cloud/iteration_{self.load_iteration}/point_cloud.ply")
         checkpoint_embeddings = os.path.join(self.config.dataset.model_path, f"checkpoint_embeddings/iteration_{self.load_iteration}/embeddings_weights.pth")
         checkpoint_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_SHMlp/iteration_{self.load_iteration}/SHMlp_weights.pth")
@@ -237,7 +234,7 @@ class Relightable3DGW:
         self.envlight_sh_mlp.cuda()
 
 
-    def optimize_embeddings_test(self, mse=False, sky_l1_loss=False):
+    def optimize_embeddings_test(self, mse=False):
         "Optimization of the images embeddings for the test set. Optimization is performed on left half of the test images."
         print(f"Optimizing test images embeddings on the left half of each image")
         # Initialize test embeddings:
@@ -249,7 +246,6 @@ class Relightable3DGW:
         viewpoint_stack = self.scene.getTestCameras().copy()
         background = torch.tensor([0,0,0], dtype=torch.float32, device="cuda")
         mse_loss = torch.nn.MSELoss()
-        # test_imgs = torch.stack([torch.tensor([viewpoint_cam.original_image]).to(dtype=torch.float32, device='cuda') for viewpoint_cam in viewpoint_stack]).to(dtype=torch.float32,  device='cuda')
         with torch.enable_grad():
             for _ in tqdm(range(self.config.optimizer.optim_embeddings_test_iters), desc = "Test images embeds optimization"):
                 if not viewpoint_stack:
@@ -257,7 +253,11 @@ class Relightable3DGW:
                 viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
                 viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
                 gt_image = viewpoint_cam.original_image.cuda()
-                gt_image_half =  get_half_images(img = gt_image, left = True)
+                sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+                occluders_mask = viewpoint_cam.occluders_mask.cuda().expand_as(gt_image)
+                gt_image_half = get_half_images(img = gt_image, left = True)
+                occluders_mask_half = get_half_images(img = occluders_mask, left = True)
+                sky_mask_half = get_half_images(img = sky_mask, left = True)
                 # Update width:
                 # viewpoint_cam.image_width = viewpoint_cam.image_width // 2
                 embedding_gt_image_half = self.embeddings_test(viewpoint_cam_id)
@@ -268,26 +268,42 @@ class Relightable3DGW:
                 image_half = get_half_images(img=render_pkg["render"], left=True)
                 depth_half = get_half_images(img=render_pkg["depth"], left=True)
                 if mse:
-                    loss = mse_loss(image_half, gt_image_half)
-                elif not sky_l1_loss:
-                    nosky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-                    nosky_mask = get_half_images(img = nosky_mask, left = True)
-                    loss = (1 - self.config.optimizer.lambda_dssim)*l1_loss(image_half, gt_image_half) + self.config.optimizer.lambda_dssim *(1.0 - ssim(image_half, gt_image_half)) + self.config.optimizer.lambda_depth*sky_depth_loss(depth_half, sky_mask=nosky_mask)
-                else: 
-                    n_tot_pixels = gt_image_half.shape[0]*gt_image_half.shape[1]*gt_image_half.shape[2]
-                    nosky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-                    nosky_mask = get_half_images(img = sky_mask, left = True)
-                    n_no_sky_pixels = torch.sum(nosky_mask == 1)
-                    l1_no_sky_weight = (1.0 - self.config.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
-                    Ll1_nosky = l1_loss(image_half*nosky_mask, gt_image_half*nosky_mask, pixel_subset_size = n_no_sky_pixels)
-                    sky_mask = 1 - nosky_mask
-                    n_sky_pixels = torch.sum(sky_mask == 1)
-                    l1_sky_weight = (1.0 - self.config.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
-                    if l1_sky_weight == 0:
-                        Ll1_sky = 0
+                    loss = mse_loss(image_half, gt_image_half, reduction=None)
+                    loss = torch.where(occluders_mask, loss, torch.nan)
+                    loss = loss.nanmean()
+                elif self.config.optimizer.l1_loss_type == "sky_fixed_weight":
+                    nosky_mask_half = 1 - sky_mask_half
+                    num_sky_pixels = torch.sum(nosky_mask_half == 1)
+                    ssim_weight = self.config.optimizer.lambda_dssim
+                    l1_weight = 1 - ssim_weight
+                    if num_sky_pixels > 0:
+                        loss = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, nosky_mask_half).int())*(l1_weight/2) + \
+                               l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, sky_mask_half).int())*(l1_weight/2) + \
+                               ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
                     else:
-                        Ll1_sky = l1_loss(image_half*(sky_mask), gt_image_half*sky_mask, pixel_subset_size = n_sky_pixels)
-                    loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + self.config.optimizer.lambda_dssim *(1.0 - ssim(image_half, gt_image_half)) +  self.config.optimizer.lambda_depth*sky_depth_loss(depth_half, sky_mask=nosky_mask) 
+                        loss = l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*l1_weight + \
+                               ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half)) 
+                elif self.config.optimizer.l1_loss_type == "sky_pixels_weight":
+                    # Sky loss- weighiting by pixels num
+                    n_tot_pixels = gt_image_half.shape[0]*gt_image_half.shape[1]*gt_image_half.shape[2]
+                    n_no_sky_pixels = torch.sum(sky_mask_half == 1)
+                    nosky_mask_half = 1 - sky_mask_half
+                    n_sky_pixels = torch.sum(nosky_mask_half == 1)
+                    ssim_weight = self.config.optimizer.lambda_dssim
+                    if n_sky_pixels > 0:
+                        # Phtometric loss- no sky and sky
+                        l1_no_sky_weight = (1.0 - ssim_weight)*(n_no_sky_pixels/n_tot_pixels)
+                        l1_sky_weight = (1.0 - ssim_weight)*(n_sky_pixels/n_tot_pixels)
+                        Ll1_nosky = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, sky_mask_half).int())
+                        Ll1_sky = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, nosky_mask_half).int())
+                        loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + \
+                                ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
+                    else:
+                        loss = l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
+                               ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))  
+                else: 
+                    loss =  l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
+                            ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad(set_to_none = True)
