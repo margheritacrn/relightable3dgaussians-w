@@ -11,19 +11,16 @@
 import os
 from argparse import ArgumentParser
 
-nerfosr_scenes = ["lk2", "schloss", "lwp"]
+nerfosr_scenes = ["lk2", "schloss", "lwp", "st"]
 
 parser = ArgumentParser(description="Full evaluation script parameters")
+parser.add_argument('--nerfosr', "-osr", required=True, type=str)
 parser.add_argument("--skip_training", action="store_true")
 parser.add_argument("--skip_rendering", action="store_true")
+parser.add_argument("--skip_metrics", action="store_true")
 parser.add_argument("--output_path", default="./eval")
 parser.add_argument("--num_sky_points", type=int, default=0)
 args, _ = parser.parse_known_args()
-
-
-if not args.skip_training or not args.skip_rendering:
-    parser.add_argument('--nerfosr', "-osr", required=True, type=str)
-    args = parser.parse_args()
 
 if not args.skip_training:
     common_args = " --quiet --eval --save_iterations 30_000 50_000 "
@@ -40,3 +37,12 @@ if not args.skip_rendering:
     for scene, source in zip(nerfosr_scenes, all_sources):
         os.system("python render.py --iteration 30000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
         os.system("python render.py --iteration 50000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
+
+if not args.skip_metrics:
+    scenes_string = ""
+    for scene in nerfosr_scenes:
+        scene_path = args.output_path + "/" + scene
+        source = args.nerfosr + "/" + scene
+        masks_path = source + "/masks"
+        sky_masks_path = source + "/sky_masks" 
+        os.system("python metrics.py -m " + scene_path + " --masks_path " + masks_path + " --sky_masks_path " + sky_masks_path)
