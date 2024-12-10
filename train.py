@@ -91,8 +91,8 @@ def training(cfg, testing_iterations, saving_iterations):
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
         gt_image = viewpoint_cam.original_image.cuda()
-        sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-        occluders_mask = viewpoint_cam.occluders_mask.cuda().expand_as(gt_image)
+        sky_mask = viewpoint_cam.sky_mask.expand_as(gt_image).cuda()
+        occluders_mask = viewpoint_cam.occluders_mask.expand_as(gt_image).cuda()
         if cfg.optimizer.lambda_envlight_sh_prior > 0:
             gt_light_condition = viewpoint_cam.image_name[:-9]
             init_light_condition = next((key for key in model.envlight_sh_priors if gt_light_condition in key), None)
@@ -118,7 +118,7 @@ def training(cfg, testing_iterations, saving_iterations):
             num_sky_pixels = torch.sum(nosky_mask == 1)
             l1_weight = 1 - cfg.optimizer.lambda_dssim
             if num_sky_pixels > 0:
-                loss = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask))(l1_weight/2) + l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask))*(l1_weight/2) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+                loss = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask).int())*(l1_weight/2) + l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask).int())*(l1_weight/2) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
             else:
                 loss = Ll1*l1_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask)) 
         elif cfg.optimizer.l1_loss_type == "sky_pixels_weight":
@@ -131,8 +131,8 @@ def training(cfg, testing_iterations, saving_iterations):
                 # Phtometric loss- no sky and sky
                 l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
                 l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
-                Ll1_nosky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask))
-                Ll1_sky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask))
+                Ll1_nosky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask).int())
+                Ll1_sky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask).int())
                 loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
             else:
                 loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))    
@@ -142,7 +142,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Normal loss
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask=viewpoint_cam.sky_mask.cuda())
+            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"], sky_mask=sky_mask)
             loss += cfg.optimizer.lambda_normal*normal_loss
 
         # Envlight losses
@@ -164,10 +164,10 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Depth regularization
         if cfg.optimizer.lambda_depth > 0:
-            sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=viewpoint_cam.sky_mask.cuda())
+            sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
             loss += cfg.optimizer.lambda_depth*sky_depth_loss_ 
         if iteration > cfg.optimizer.reg_depth_from_iter and cfg.optimizer.lambda_depth_smooth > 0:
-                depth_loss = predicted_depth_loss(render_pkg["depth"])
+                depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
                 loss += cfg.optimizer.lambda_depth_smooth*depth_loss 
         loss.backward()
 
