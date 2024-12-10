@@ -18,7 +18,7 @@ from gaussian_renderer import render
 from utils.loss_utils import l1_loss, ssim, sky_depth_loss
 from PIL import Image
 from random import randint
-#TODO: Update optimize_embeddings_test with l1loss differentiation (see optimizer config)
+
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
 class Relightable3DGW:
