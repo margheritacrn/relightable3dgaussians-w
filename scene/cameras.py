@@ -15,9 +15,10 @@ import numpy as np
 from utils.graphics_utils import getWorld2View2, getProjectionMatrix, fov2focal, get_rays
 
 class Camera(nn.Module):
-    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, sky_mask, gt_alpha_mask,
+    def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
                  image_name, uid,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", 
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda",
+                 sky_mask=None, occluders_mask=None,
                  normal_image=None, cx=None, cy=None, image_w=None, image_h=None
                  ):
         super(Camera, self).__init__()
@@ -55,6 +56,7 @@ class Camera(nn.Module):
         self.image_height = self.original_image.shape[1]
         self.gt_alpha_mask = gt_alpha_mask
         self.sky_mask = sky_mask
+        self.occluders_mask = occluders_mask
 
         # if gt_alpha_mask is not None:
         if False:
