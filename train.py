@@ -91,6 +91,8 @@ def training(cfg, testing_iterations, saving_iterations):
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
         viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
         gt_image = viewpoint_cam.original_image.cuda()
+        sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
+        occluders_mask = viewpoint_cam.occluders_mask.cuda().expand_as(gt_image)
         if cfg.optimizer.lambda_envlight_sh_prior > 0:
             gt_light_condition = viewpoint_cam.image_name[:-9]
             init_light_condition = next((key for key in model.envlight_sh_priors if gt_light_condition in key), None)
@@ -98,7 +100,6 @@ def training(cfg, testing_iterations, saving_iterations):
             gt_envlight_sh_prior = torch.tensor(gt_envlight_sh_prior, dtype=torch.float32, device="cuda")
 
         # Get SH coefficients of environment lighting for current training image
-        #TODO: edit here: sh_envlight_mlp needs an embedding vector as input. I probably need the camera index. Compare vewpoint stack content with scene_info in scne/__ini__.py
         embedding_gt_image = model.embeddings(viewpoint_cam_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
         # Get environment lighting object for the current training image
@@ -109,41 +110,41 @@ def training(cfg, testing_iterations, saving_iterations):
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
 
         # Loss
-        Ll1 = l1_loss(image, gt_image)
+        # Photometric loss
+        Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
         if cfg.optimizer.l1_loss_type == "sky_fixed_weight":
             # Sky loss- weight equally sky and non-sky regions
-            sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
-            skyonly_mask = 1 -sky_mask 
-            num_sky_pixels = torch.sum(skyonly_mask == 1)
-            l1_weight = (1-cfg.optimizer.lambda_dssim)
+            nosky_mask = 1 - sky_mask 
+            num_sky_pixels = torch.sum(nosky_mask == 1)
+            l1_weight = 1 - cfg.optimizer.lambda_dssim
             if num_sky_pixels > 0:
-                loss = l1_loss(image*skyonly_mask, gt_image*skyonly_mask)*(l1_weight/2) + l1_loss(image*sky_mask, gt_image*sky_mask)*(l1_weight/2) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
+                loss = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask))(l1_weight/2) + l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask))*(l1_weight/2) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
             else:
-                loss = Ll1*l1_weight
+                loss = Ll1*l1_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask)) 
         elif cfg.optimizer.l1_loss_type == "sky_pixels_weight":
             # Sky loss- weighiting by pixels num
             n_tot_pixels = gt_image.shape[0]*gt_image.shape[1]*gt_image.shape[2]
-            # Phtometric loss- no sky
-            sky_mask = viewpoint_cam.sky_mask.cuda().expand_as(gt_image)
             n_no_sky_pixels = torch.sum(sky_mask == 1)
-            l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
-            Ll1_nosky = l1_loss(image*sky_mask, gt_image*sky_mask, pixel_subset_size = n_no_sky_pixels)
-            # Photometric loss- sky
-            sky_mask = 1 - sky_mask
-            n_sky_pixels = torch.sum(sky_mask == 1)
-            l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
-            if l1_sky_weight == 0:
-                Ll1_sky = 0
+            nosky_mask = 1 - sky_mask
+            n_sky_pixels = torch.sum(nosky_mask == 1)
+            if n_sky_pixels > 0:
+                # Phtometric loss- no sky and sky
+                l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
+                l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
+                Ll1_nosky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask))
+                Ll1_sky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask))
+                loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
             else:
-                Ll1_sky = l1_loss(image*(sky_mask), gt_image*sky_mask, pixel_subset_size = n_sky_pixels)
+                loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))    
         else:
-            loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image))
-        
-        # Classic loss 
-        loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image)) ###
+            # Original loss 
+            loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+
+        # Normal loss
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
             normal_loss = predicted_normal_loss(render_pkg["normal"], render_pkg["normal_ref"], render_pkg["alpha"], sky_mask=viewpoint_cam.sky_mask.cuda())
             loss += cfg.optimizer.lambda_normal*normal_loss
+
         # Envlight losses
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
             viewing_dirs = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
@@ -155,17 +156,19 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
             envl_init_loss = envlight_prior_loss(envlight_sh, gt_envlight_sh_prior)
             loss += cfg.optimizer.lambda_envlight_sh_prior * envl_init_loss
+
         # Planar regularization
         if cfg.optimizer.lambda_scale > 0:
             scale_loss = min_scale_loss(radii, model.gaussians)
             loss += cfg.optimizer.lambda_scale*scale_loss
+
         # Depth regularization
         if cfg.optimizer.lambda_depth > 0:
             sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=viewpoint_cam.sky_mask.cuda())
             loss += cfg.optimizer.lambda_depth*sky_depth_loss_ 
-        if iteration > cfg.optimizer.reg_depth_from_iter:
+        if iteration > cfg.optimizer.reg_depth_from_iter and cfg.optimizer.lambda_depth_smooth > 0:
                 depth_loss = predicted_depth_loss(render_pkg["depth"])
-                loss += cfg.optimizer.lambda_depth*depth_loss 
+                loss += cfg.optimizer.lambda_depth_smooth*depth_loss 
         loss.backward()
 
         iter_end.record()
