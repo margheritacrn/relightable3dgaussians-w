@@ -60,6 +60,7 @@ def ssim(img1_, img2_, window_size=11, size_average=True, mask=None):
 def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None):
     img1 = img1[None,...]
     img2 = img2[None,...]
+    mask = mask[None,...]
     mu1 = F.conv2d(img1, window, padding=window_size // 2, groups=channel)
     mu2 = F.conv2d(img2, window, padding=window_size // 2, groups=channel)
 
@@ -78,6 +79,7 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
 
     if size_average:
         if mask is not None:
+            assert mask.shape[1] == img1.shape[1], "the mask must be expanded as the input images"
             return ((ssim_map*mask).sum())/(torch.sum(mask == 1))
         return ssim_map.mean()
     else:
@@ -296,13 +298,19 @@ def img2mse(x, y, mask=None):
     if mask is None:
         return torch.mean((x - y) * (x - y))
     else:
-        return torch.sum((x - y) * (x - y) * mask.unsqueeze(0)) / (torch.sum(mask) * x.shape[0] + TINY_NUMBER)
+        if mask.shape[0] == x.shape[0]:
+            return torch.sum((x - y) * (x - y) * mask.unsqueeze(0)) / (torch.sum(mask) + TINY_NUMBER)
+        else:
+            return torch.sum((x - y) * (x - y) * mask.unsqueeze(0)) / (torch.sum(mask)*x.shape[0] + TINY_NUMBER)
 
 def img2mae(x, y, mask=None):
     if mask is None:
         return torch.mean(torch.abs(x - y))
     else:
-        return torch.sum(torch.abs(x - y) * mask.unsqueeze(0)) / (torch.sum(mask) * x.shape[0] + TINY_NUMBER)
+        if mask.shape[0] == x.shape[0]:
+            return torch.sum(torch.abs(x - y) * mask.unsqueeze(0)) / (torch.sum(mask) + TINY_NUMBER)
+        else:
+            return torch.sum(torch.abs(x - y) * mask.unsqueeze(0)) / (torch.sum(mask) * x.shape[0] + TINY_NUMBER)
 
 def mse2psnr(x):
     return -10. * torch.log(torch.tensor(x)+TINY_NUMBER) / torch.log(torch.tensor(10))
