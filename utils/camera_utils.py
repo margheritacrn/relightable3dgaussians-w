@@ -44,6 +44,12 @@ def loadCam(args, id, cam_info, resolution_scale):
     gt_image = resized_image_rgb[:3, ...]
     if cam_info.sky_mask is not None:
         sky_mask = PILtoTorch(cam_info.sky_mask, resolution)
+    else:
+        sky_mask = None
+    if cam_info.occluders_mask is not None:
+        occluders_mask = PILtoTorch(cam_info.occluders_mask, resolution)
+    else:
+        sky_mask = None
     if cam_info.normal_image is not None:
         resized_normal_image_rgb = PILtoTorch(cam_info.normal_image, resolution)
         gt_normal_image = resized_normal_image_rgb[:3, ...]
@@ -54,7 +60,7 @@ def loadCam(args, id, cam_info, resolution_scale):
 
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, cx= cam_info.cx, cy= cam_info.cy,
-                  image=gt_image, sky_mask=sky_mask, gt_alpha_mask=loaded_mask,
+                  image=gt_image, sky_mask=sky_mask, occluders_mask=occluders_mask, gt_alpha_mask=loaded_mask,
                   image_name=cam_info.image_name, uid=id, data_device=args.data_device, normal_image=gt_normal_image, image_w = cam_info.width, image_h = cam_info.height)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):

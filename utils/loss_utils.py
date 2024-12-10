@@ -26,6 +26,7 @@ import torch.nn.functional as F
 
 def l1_loss(network_output, gt, mask=None):
     if mask is not None:
+        assert mask.shape[0] == network_output.shape[0], "the mask must be expanded as the input images"
         num_pixels = torch.sum(mask == 1)
         return (torch.abs((network_output*mask - gt*mask)).sum())/num_pixels
     else:
@@ -90,30 +91,30 @@ def zero_one_loss(img):
     loss = torch.mean(torch.log(val) + torch.log(1 - val))
     return loss
 
-def predicted_depth_loss(depth_map, sky_mask=None):
+def predicted_depth_loss(depth_map, nosky_mask=None):
     with torch.no_grad():
         avg_depth_map = depth_map.permute(1,2,0).data.clone().cpu().numpy()
         avg_depth_map = cv2.blur(avg_depth_map.astype(np.float32),(5,5))
         avg_depth_map = torch.tensor(avg_depth_map).cuda()
-    if sky_mask is not None:
-        sky_mask = sky_mask.expand_as(depth_map)
-        depth_map = depth_map*sky_mask
-        avg_depth_map = avg_depth_map*sky_mask.permute(1,2,0)
+    if nosky_mask is not None:
+        nosky_mask = nosky_mask.expand_as(depth_map)
+        depth_map = depth_map*nosky_mask
+        avg_depth_map = avg_depth_map*nosky_mask.permute(1,2,0)
         loss = torch.abs(((depth_map.permute(1,2,0) - avg_depth_map))).sum()
-        num_sky_pixels = torch.sum(sky_mask == 1)
+        num_sky_pixels = torch.sum(nosky_mask == 1)
         return torch.sum(loss)/num_sky_pixels
     else:
         return torch.abs((depth_map.permute(1,2,0) - avg_depth_map)).mean()
 
 
 def sky_depth_loss(depth_map, sky_mask, gamma = 0.02):
-    # Compute mean depth in no-sky region and sky region and compare differences
+    # Compute mean depth in no-sky region and sky region and compare difference
     n_no_sky_pixels = torch.sum(sky_mask == 1)
     with torch.no_grad():
         mean_depth_no_sky = (depth_map*sky_mask.expand_as(depth_map)).sum()/n_no_sky_pixels
-    sky_mask = 1 - sky_mask
-    n_sky_pixels = torch.sum(sky_mask == 1)
-    sky_depth = depth_map*sky_mask.expand_as(depth_map)
+    nosky_mask = 1 - sky_mask
+    n_sky_pixels = torch.sum(nosky_mask == 1)
+    sky_depth = depth_map*nosky_mask.expand_as(depth_map)
     mean_depth_sky = (sky_depth).sum()/n_sky_pixels
     loss = torch.exp(-gamma*(mean_depth_sky-mean_depth_no_sky))
     return loss
@@ -136,6 +137,7 @@ def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
 
     w = weight.permute(1,2,0).reshape(-1,3)[...,0].detach()
     if sky_mask is not None:
+        # Exclude sky region
         sky_mask = sky_mask.expand_as(normal)
         normal_ref = normal_ref*sky_mask
         normal = normal*sky_mask
