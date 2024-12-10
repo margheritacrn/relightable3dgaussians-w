@@ -84,7 +84,7 @@ def render_and_evaluate(cfg):
             best_psnr = 0
             best_angle = None
         
-            n = 2 #51
+            n = 51
             sun_angles_prepare_list = torch.linspace(sun_angle_range[0], sun_angle_range[1], n)  
             sun_angles = [torch.tensor([angle,0, 0]) for angle in sun_angles_prepare_list] #rotate only around y
 
