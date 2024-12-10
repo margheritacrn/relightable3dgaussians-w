@@ -14,11 +14,10 @@ import os
 from PIL import Image
 import torch
 import torchvision.transforms.functional as tf
-from utils.loss_utils import ssim
+from utils.loss_utils import ssim, img2mse, mse2psnr
 from lpipsPyTorch import lpips
 import json
 from tqdm import tqdm
-from utils.image_utils import psnr
 from argparse import ArgumentParser
 import numpy as np
 from functools import reduce
@@ -26,57 +25,57 @@ import torchvision
 from os import makedirs
 
 
-def readImages(renders_dir, gt_dir, masks_path=None, sky_masks_path=None, save_masked_imgs= False):
+def readImages(renders_dir, gt_dir, occluders_masks_path=None, sky_masks_path=None):
     renders = []
     gts = []
     image_names = []
-    discarded_samples = 0
+    resized_masks = 0
+    masks = []
     for fname in os.listdir(renders_dir):
         render = Image.open(renders_dir / fname)
         render = tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda()
         gt = Image.open(gt_dir / fname)
         gt = tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda()
-        masks =  []
+
         if sky_masks_path is not None:
             sky_mask_path = os.path.join(sky_masks_path, fname[:-4] + "_mask.png")
             sky_mask = Image.open(sky_mask_path).convert("L")
             sky_mask = tf.to_tensor(sky_mask).cuda()
-            masks.append(sky_mask)
-        if masks_path is not None:
-            mask_path = os.path.join(masks_path, fname)
-            mask = Image.open(mask_path).convert("L")
-            if mask.height != gt.shape[2]:
-                resized_mask = mask.resize((mask.width, gt.shape[2]), Image.NEAREST)
-                mask = tf.to_tensor(resized_mask).cuda()
-            else:
-                mask = tf.to_tensor(mask).cuda()
-            # Ensure mask is binary
-            mask = (mask > 0.5).float()
-            if mask.shape[1] != gt.shape[2]:
-                discarded_samples += 1
-                continue
-            mask = mask.expand_as(gt)
-            masks.append(mask)
-        if len(masks) > 0:
-            mask_final =  reduce(lambda x, y: x * y, masks)
-            gts.append(gt*mask_final)
-            renders.append(render*mask_final)
-            if save_masked_imgs:
-                rend_mask_path = os.path.join(renders_dir, "masked")
-                gt_mask_path = os.path.join(gt_dir, "masked")
-                makedirs(rend_mask_path, exist_ok=True)
-                makedirs(gt_mask_path, exist_ok=True)
-                torchvision.utils.save_image(render*mask_final, os.path.join(rend_mask_path, fname + ".png"))
-                torchvision.utils.save_image(gt*mask_final, os.path.join(gt_mask_path, fname + ".png"))
         else:
-            renders.append(gt)
-            gts.append(render)
+            sky_mask = None
+        if occluders_masks_path is not None:
+            occluders_mask_path = os.path.join(occluders_masks_path, fname[:-4]+".png")
+            occluders_mask = Image.open(occluders_mask_path).convert("L")
+            if occluders_mask.height != gt.shape[2]:
+                resized_mask = occluders_mask.resize((occluders_mask.width, gt.shape[2]), Image.NEAREST)
+                occluders_mask = tf.to_tensor(resized_mask).cuda()
+                occluders_mask = (occluders_mask > 0.5).float()
+                resized_masks += 1
+            else:
+                occluders_mask = tf.to_tensor(occluders_mask).cuda()
+            occluders_mask = occluders_mask.expand_as(gt)
+        else:
+            occluders_mask = None
+
+        if sky_mask is not None and occluders_mask is not None:
+            mask_final = torch.logical_or(sky_mask, occluders_mask).int()
+        elif sky_mask is not None:
+            mask_final = sky_mask
+        elif occluders_mask is not None:
+            mask_final = occluders_mask
+        else:
+            mask_final = None
+  
+        masks.append(mask_final)
+        gts.append(gt)
+        renders.append(render)
         image_names.append(fname)
-    print(f"Reading images completed- discarder samples: {discarded_samples}")
-    return renders, gts, image_names
+
+    print(f"Reading images completed- resized masks: {resized_masks}")
+    return renders, gts, image_names, masks
 
 
-def evaluate_full(model_path, test_dir = None, masks_path=None, sky_masks_path=None):
+def evaluate_full(model_path, test_dir = None, occluders_masks_path=None, sky_masks_path=None):
 
     full_dict = {}
     per_view_dict = {}
@@ -105,28 +104,36 @@ def evaluate_full(model_path, test_dir = None, masks_path=None, sky_masks_path=N
             method_dir = test_dir / method
             gt_dir = method_dir/ "gt"
             renders_dir = method_dir / "renders"
-            renders, gts, image_names = readImages(renders_dir, gt_dir, masks_path, sky_masks_path, save_masked_imgs=True)
+            renders, gts, image_names, masks = readImages(renders_dir, gt_dir, occluders_masks_path, sky_masks_path)
 
             ssims = []
+            mses = []
             psnrs = []
             lpipss = []
 
             for idx in tqdm(range(len(renders)), desc="Metric evaluation progress"):
                     _,C,H,W = renders[idx].shape
-                    ssims.append(ssim(renders[idx], gts[idx]))
-                    psnrs.append(psnr(renders[idx], gts[idx]))
+                    ssim_ = ssim(renders[idx], gts[idx], mask=masks[idx])
+                    mse = img2mse(renders[idx], gts[idx], mask=masks[idx])
+                    psnr = mse2psnr(mse)
+                    ssims.append(ssim_)
+                    mses.append(mse)
+                    psnrs.append(psnr)
                     lpipss.append(lpips(renders[idx], gts[idx], net_type="vgg"))
-                    
+
             print("  SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+            print("  MSE : {:>12.7f}".format(torch.tensor(mses).mean(), ".5"))
             print("  PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
             print("  LPIPS: {:>12.7f}".format(torch.tensor(lpipss).mean(), ".5"))
             print("")
 
             full_dict[scene_dir][method].update({"SSIM": torch.tensor(ssims).mean().item(),
                                                     "PSNR": torch.tensor(psnrs).mean().item(),
+                                                    "MSE": torch.tensor(mses).mean().item(),
                                                     "LPIPS": torch.tensor(lpipss).mean().item()})
             per_view_dict[scene_dir][method].update({"SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
                                                         "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
+                                                        "MSE": {name: mse for mse, name in zip(torch.tensor(mses).tolist(), image_names)},
                                                         "LPIPS": {name: lp for lp, name in zip(torch.tensor(lpipss).tolist(), image_names)}})
 
             with open(scene_dir + "/results_full.json", 'w') as fp:
@@ -135,7 +142,7 @@ def evaluate_full(model_path, test_dir = None, masks_path=None, sky_masks_path=N
                 json.dump(per_view_dict[scene_dir], fp, indent=True)
 
 
-def evaluate_half(model_path, masks_path=None, sky_masks_path=None):
+def evaluate_half(model_path, occluders_masks_path=None, sky_masks_path=None):
 
     full_dict = {}
     per_view_dict = {}
@@ -163,28 +170,37 @@ def evaluate_half(model_path, masks_path=None, sky_masks_path=None):
             method_dir = test_dir / method
             gt_dir = method_dir/ "gt"
             renders_dir = method_dir / "renders"
-            renders, gts, image_names = readImages(renders_dir, gt_dir, masks_path, sky_masks_path)
+            renders, gts, image_names, masks = readImages(renders_dir, gt_dir, occluders_masks_path, sky_masks_path)
 
             ssims = []
+            mses = []
             psnrs = []
             lpipss = []
 
             for idx in tqdm(range(len(renders)), desc="Metric evaluation progress"):
                     _,C,H,W = renders[idx].shape
-                    ssims.append(ssim(renders[idx][:,:,:,W//2:], gts[idx][:,:,:,W//2:]))
-                    psnrs.append(psnr(renders[idx][:,:,:,W//2:], gts[idx][:,:,:,W//2:]))
-                    lpipss.append(lpips(renders[idx][:,:,:,W//2:], gts[idx][:,:,:,W//2:], net_type="vgg"))
+                    ssim_ = ssim(renders[idx][:,:,:,W//2:], gts[idx][:,:,:,W//2:], mask = masks[idx][:,:,:,W//2:])
+                    mse = img2mse(renders[idx][:,:,:,W//2:], gts[idx][:,:,:,W//2:], mask = masks[idx][:,:,:,W//2:])
+                    psnr = mse2psnr(mse)
+                    lpips_ = lpips(renders[idx][:,:,:,W//2:], gts[idx][:,:,:,W//2:], net_type="vgg")
+                    ssims.append(ssim_)
+                    mses.append(mse)
+                    psnrs.append(psnr)
+                    lpipss.append(lpips_)
                     
             print("  SSIM : {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"))
+            print("  MSE : {:>12.7f}".format(torch.tensor(mses).mean(), ".5"))
             print("  PSNR : {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
             print("  LPIPS: {:>12.7f}".format(torch.tensor(lpipss).mean(), ".5"))
             print("")
 
             full_dict[scene_dir][method].update({"SSIM": torch.tensor(ssims).mean().item(),
                                                     "PSNR": torch.tensor(psnrs).mean().item(),
+                                                    "MSE": torch.tensor(mses).mean().item(),
                                                     "LPIPS": torch.tensor(lpipss).mean().item()})
             per_view_dict[scene_dir][method].update({"SSIM": {name: ssim for ssim, name in zip(torch.tensor(ssims).tolist(), image_names)},
                                                         "PSNR": {name: psnr for psnr, name in zip(torch.tensor(psnrs).tolist(), image_names)},
+                                                        "MSE": {name: mse for mse, name in zip(torch.tensor(mses).tolist(), image_names)},
                                                         "LPIPS": {name: lp for lp, name in zip(torch.tensor(lpipss).tolist(), image_names)}})
 
             with open(scene_dir + "/results_half.json", 'w') as fp:
