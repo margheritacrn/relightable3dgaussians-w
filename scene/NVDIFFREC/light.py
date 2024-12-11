@@ -25,7 +25,7 @@ class EnvironmentLight(torch.nn.Module):
             # implement the function
             # update attribute
             self.base_is_SH = True
-        # define constant attributes for diffuse irradiance computationn
+        # define constant attributes for diffuse irradiance computation
         self.NUM_CHANNELS = 3
         self.C1 = 0.429043
         self.C2 = 0.511664
@@ -41,11 +41,10 @@ class EnvironmentLight(torch.nn.Module):
 
     def get_diffuse_irradiance(self, normal):
         """
-        The function computes diffuse irradiance by convolving
-        environment light and cosine term in frequency domain. In the
+        The function refers to section 3.2 of "An efficient representaiton for Irradiance Environment Maps"
+        by Ramamoorthi and Pat Hanrahan, https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf.
+        The function computes diffuse irradiance by convolving environment light and cosine term in frequency domain. In the
         SH expansion only terms up to degree 2 are considered.
-        The implementation refers to section 3.2 of "An efficient representaiton for Irradiacne Environment Maps"
-        by Ramamoorthi and Pat Hanrahan.
 
         Args:
             normal(torch.Tensor): tensor of shape N x 3 containing N normal vectors in R³.
