@@ -111,11 +111,13 @@ def predicted_depth_loss(depth_map, nosky_mask=None):
 
 def sky_depth_loss(depth_map, sky_mask, gamma = 0.02):
     # Compute mean depth in no-sky region and sky region and compare difference
+    nosky_mask = 1 - sky_mask
+    n_sky_pixels = torch.sum(nosky_mask == 1)
+    if n_sky_pixels == 0:
+        return 0
     n_no_sky_pixels = torch.sum(sky_mask == 1)
     with torch.no_grad():
         mean_depth_no_sky = (depth_map*sky_mask.expand_as(depth_map)).sum()/n_no_sky_pixels
-    nosky_mask = 1 - sky_mask
-    n_sky_pixels = torch.sum(nosky_mask == 1)
     sky_depth = depth_map*nosky_mask.expand_as(depth_map)
     mean_depth_sky = (sky_depth).sum()/n_sky_pixels
     loss = torch.exp(-gamma*(mean_depth_sky-mean_depth_no_sky))
@@ -138,7 +140,7 @@ def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
         weight = torch.ones_like(normal_ref)
 
     w = weight.permute(1,2,0).reshape(-1,3)[...,0].detach()
-    if sky_mask is not None:
+    if sky_mask is not None and torch.sum(sky_mask == 0) > 0:
         # Exclude sky region
         sky_mask = sky_mask.expand_as(normal)
         normal_ref = normal_ref*sky_mask
