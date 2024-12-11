@@ -301,7 +301,8 @@ class Relightable3DGW:
                     else:
                         loss = l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
                                ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))  
-                else: 
+                else:
+                    ssim_weight = self.config.optimizer.lambda_dssim
                     loss =  l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
                             ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
                 loss.backward()
