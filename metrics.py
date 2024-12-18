@@ -38,13 +38,13 @@ def readImages(renders_dir, gt_dir, occluders_masks_path=None, sky_masks_path=No
         gt = tf.to_tensor(gt).unsqueeze(0)[:, :3, :, :].cuda()
 
         if sky_masks_path is not None:
-            sky_mask_path = os.path.join(sky_masks_path, fname[:-4] + "_mask.png")
+            sky_mask_path = os.path.join(sky_masks_path, fname.split(".")[0] + "_mask.png")
             sky_mask = Image.open(sky_mask_path).convert("L")
             sky_mask = tf.to_tensor(sky_mask).cuda()
         else:
             sky_mask = None
         if occluders_masks_path is not None:
-            occluders_mask_path = os.path.join(occluders_masks_path, fname[:-4]+".png")
+            occluders_mask_path = os.path.join(occluders_masks_path, fname.split(".")[0] + ".png")
             occluders_mask = Image.open(occluders_mask_path).convert("L")
             if occluders_mask.height != gt.shape[2]:
                 resized_mask = occluders_mask.resize((occluders_mask.width, gt.shape[2]), Image.NEAREST)
