@@ -11,3 +11,4 @@ build_submodules.sh
 submodules_*
 *.dump
 gaussian_renderer/initpgsr.py
+tesst*
