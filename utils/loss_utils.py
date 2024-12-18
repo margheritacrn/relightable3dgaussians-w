@@ -79,6 +79,8 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
 
     if size_average:
         if mask is not None:
+            if(len(mask.shape) > 4):
+                mask = mask.squeeze(0)
             assert mask.shape[1] == img1.shape[1], "the mask must be expanded as the input images"
             return ((ssim_map*mask).sum())/(torch.sum(mask == 1))
         return ssim_map.mean()
@@ -105,6 +107,27 @@ def predicted_depth_loss(depth_map, nosky_mask=None):
         loss = torch.abs(((depth_map.permute(1,2,0) - avg_depth_map))).sum()
         num_sky_pixels = torch.sum(nosky_mask == 1)
         return torch.sum(loss)/num_sky_pixels
+    else:
+        return torch.abs((depth_map.permute(1,2,0) - avg_depth_map)).mean()
+    
+
+def predicted_depth_loss_separate_sky(depth_map, sky_mask=None):
+    with torch.no_grad():
+        avg_depth_map = depth_map.permute(1,2,0).data.clone().cpu().numpy()
+        avg_depth_map = cv2.blur(avg_depth_map.astype(np.float32),(5,5))
+        avg_depth_map = torch.tensor(avg_depth_map).cuda()
+    if sky_mask is not None:
+        # non-sky region
+        sky_mask = sky_mask.expand_as(depth_map)
+        depth_map_no_sky = depth_map*sky_mask
+        avg_depth_map_no_sky = avg_depth_map*sky_mask.permute(1,2,0)
+        depth_loss_no_sky = torch.abs(((depth_map_no_sky.permute(1,2,0) - avg_depth_map_no_sky))).sum()/torch.sum(sky_mask == 1)
+        # sky region
+        nosky_mask = 1 - sky_mask
+        depth_map_sky = depth_map*nosky_mask
+        avg_depth_map_sky = avg_depth_map*nosky_mask.permute(1,2,0)
+        depth_loss_sky = torch.abs(((depth_map_sky.permute(1,2,0) - avg_depth_map_sky))).sum()/torch.sum(nosky_mask == 1)
+        return depth_loss_no_sky + depth_loss_sky
     else:
         return torch.abs((depth_map.permute(1,2,0) - avg_depth_map)).mean()
 
