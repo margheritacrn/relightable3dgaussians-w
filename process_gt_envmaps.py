@@ -35,7 +35,7 @@ def rotate_envmap(envmap: EnvironmentMap, angles:list, return_sh: bool = False, 
     envmap_rot_data = envmap_rot.data.copy()
 
     if save_jpg_path is not None:
-        envmap_jpg_rot = (envmap_rot  - envmap_rot.min()) / (envmap_rot.max() - envmap_rot.min()) * 255
+        envmap_jpg_rot = (envmap_rot_data  - envmap_rot_data.min()) / (envmap_rot_data.max() - envmap_rot_data.min()) * 255
         envmap_jpg_rot = envmap_jpg_rot.astype(np.uint8)
         envmap_jpg_rot = Image.fromarray(envmap_jpg_rot)
         envmap_jpg_rot.save(save_jpg_path)
@@ -47,7 +47,7 @@ def rotate_envmap(envmap: EnvironmentMap, angles:list, return_sh: bool = False, 
         return envmap_rot
 
 
-def get_sh_coeffs_gt_envmaps(nerfosr_path: str, lmax: int=4):
+def get_sh_coeffs_gt_envmaps(nerfosr_path: str, lmax: int=4, rotate=False):
     for scene in os.listdir(nerfosr_path):
         print(f"Scene: {scene}")
         gtenvmapsdir_path = os.path.join(nerfosr_path, scene + "/test/ENV_MAP_CC")
@@ -59,16 +59,23 @@ def get_sh_coeffs_gt_envmaps(nerfosr_path: str, lmax: int=4):
                     # Rotate
                     gtenvmap_jpg_path = os.path.join(lighting_cond_path, gtenvmap_filename)
                     gt_envmap = EnvironmentMap(gtenvmap_jpg_path, 'latlong')
-                    # Rotate envmap
-                    _, gtenvmap_sh_coeffs = rotate_envmap(gt_envmap, angles=[0,0,-np.pi/2], return_sh=True, lmax=4, resize_height=180,
-                                                        save_jpg_path=gtenvmap_jpg_path[:-4]+"_rotated.jpg") # angles z,y,x
-                    np.save(gtenvmap_jpg_path[:-4]+'rotatedSH.npy', gtenvmap_sh_coeffs)
+                    if rotate:
+                        # Rotate envmap
+                        _, gtenvmap_sh_coeffs = rotate_envmap(gt_envmap, angles=[0,0,-np.pi/2], return_sh=True, lmax=lmax, resize_height=180,
+                                                            save_jpg_path=gtenvmap_jpg_path[:-4]+"_rotated.jpg") # angles z,y,x
+                        np.save(gtenvmap_jpg_path[:-4]+f'rotatedSH{lmax}.npy', gtenvmap_sh_coeffs)
+                    else:
+                        gtenvmap_sh_coeffs = sh_utility.get_coefficients_from_image(gt_envmap.data, lmax)
+                        np.save(gtenvmap_jpg_path[:-4]+f'SH{lmax}.npy', gtenvmap_sh_coeffs)
                     # SH reconstruction 
                     rendered_sh = sh_utility.sh_render(gtenvmap_sh_coeffs, width = 360)
                     rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
                     rendered_sh = rendered_sh.astype(np.uint8)
                     reconstructed_envmap = Image.fromarray(rendered_sh)
-                    reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+"rotatedSHrec.jpg")
+                    if rotate:
+                        reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"rotatedSH{lmax}rec.jpg")
+                    else:
+                        reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"SH{lmax}rec.jpg")
 
 
 def main(nerfosr_path: str, lmax: int):
