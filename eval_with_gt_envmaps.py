@@ -16,7 +16,7 @@ from utils.sh_additional_utils import get_coefficients_from_image
 import cv2
 import numpy as np
 import torch
-from envmap import EnvironmentMap
+import torchvision.transforms.functional as tf
 import os
 import sys
 from tqdm import tqdm
@@ -59,7 +59,11 @@ def render_and_evaluate(cfg):
         config_test = importlib.import_module("test_config").config
         config_test_names = [key.split(".")[0] for key in config_test.keys()]
 
-        test_cameras = [c for c in model.scene.getTestCameras() if c.image_name in config_test_names]
+        if cfg.eval_all:
+            test_cameras = model.scene.getTestCameras()
+        else:
+            test_cameras = [c for c in model.scene.getTestCameras() if c.image_name in config_test_names]
+
         renders_path = os.path.join(cfg.dataset.model_path, "eval_gt_envmap", "test", "iteration_{}".format(model.load_iteration), "renders")
         gts_path = os.path.join(cfg.dataset.model_path, "eval_gt_envmap", "test", "iteration_{}".format(model.load_iteration), "gt")
         makedirs(renders_path, exist_ok=True)
@@ -71,7 +75,15 @@ def render_and_evaluate(cfg):
         for view in tqdm(test_cameras):
             print(view.image_name)
 
-            image_config = config_test[view.image_name]
+            if cfg.eval_all:
+                if "_DSC" in view.image_name:
+                    lighting_condition = view.image_name.split("_DSC")[0]
+                else:
+                    lighting_condition = view.image_name.split("_IMG")[0]
+                source_img = [config_test_name for config_test_name in config_test_names if lighting_condition in config_test_name]
+                image_config = config_test[source_img[0]]
+            else:
+                image_config = config_test[view.image_name]
             mask_path = image_config["mask_path"]
             envmap_img_path = image_config["env_map_path"]
             init_rot_x = image_config["initial_env_map_rotation"]["x"]
@@ -87,11 +99,20 @@ def render_and_evaluate(cfg):
             gt_image = view.original_image.cuda()
 
             # Get eval mask
-            mask=cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            mask=cv2.resize(mask, (gt_image.shape[2], gt_image.shape[1]))
+            if cfg.eval_all and view.image_name not in config_test.keys():
+                occluders_mask_path = os.path.join(cfg.dataset.source_path, "masks", view.image_name + ".png")
+                occluders_mask = cv2.imread(occluders_mask_path, cv2.IMREAD_GRAYSCALE)
+                occluders_mask = cv2.resize(occluders_mask, (gt_image.shape[2], gt_image.shape[1]))
+                sky_mask_path = os.path.join(cfg.dataset.source_path, "sky_masks", view.image_name + "_mask.png")
+                sky_mask = cv2.imread(sky_mask_path, cv2.IMREAD_GRAYSCALE)
+                sky_mask = cv2.resize(sky_mask, (gt_image.shape[2], gt_image.shape[1]))
+                mask = cv2.bitwise_and((sky_mask).astype(np.uint8), (occluders_mask).astype(np.uint8))
+            else:
+                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                mask = cv2.resize(mask, (gt_image.shape[2], gt_image.shape[1]))
             kernel = np.ones((5, 5), np.uint8)
             mask = cv2.erode(mask, kernel, iterations=1)
-            mask=torch.from_numpy(mask//255).cuda()
+            mask = torch.from_numpy(mask//255).cuda()
 
             best_psnr = 0
             best_angle = None
@@ -185,13 +206,15 @@ if __name__ == "__main__":
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--test_config", default="", type=str)
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--eval_all", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
         f"load_iteration={str(args.iteration)}",
-        f"+test_config={args.test_config}"
+        f"+test_config={args.test_config}",
+        f"+eval_all={args.eval_all}"
     ]
 
     # Initialize system state (RNG)
