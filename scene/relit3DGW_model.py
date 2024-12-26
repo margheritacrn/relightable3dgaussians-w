@@ -267,6 +267,7 @@ class Relightable3DGW:
                 # viewpoint_cam.image_width = viewpoint_cam.image_width*2
                 image_half = get_half_images(img=render_pkg["render"], left=True)
                 depth_half = get_half_images(img=render_pkg["depth"], left=True)
+                ssim_weight = self.config.optimizer.lambda_dssim
                 if mse:
                     loss = mse_loss(image_half, gt_image_half, reduction=None)
                     loss = torch.where(occluders_mask, loss, torch.nan)
@@ -274,7 +275,6 @@ class Relightable3DGW:
                 elif self.config.optimizer.l1_loss_type == "sky_fixed_weight":
                     nosky_mask_half = 1 - sky_mask_half
                     num_sky_pixels = torch.sum(nosky_mask_half == 1)
-                    ssim_weight = self.config.optimizer.lambda_dssim
                     l1_weight = 1 - ssim_weight
                     if num_sky_pixels > 0:
                         loss = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, nosky_mask_half).int())*(l1_weight/2) + \
@@ -289,7 +289,6 @@ class Relightable3DGW:
                     n_no_sky_pixels = torch.sum(sky_mask_half == 1)
                     nosky_mask_half = 1 - sky_mask_half
                     n_sky_pixels = torch.sum(nosky_mask_half == 1)
-                    ssim_weight = self.config.optimizer.lambda_dssim
                     if n_sky_pixels > 0:
                         # Phtometric loss- no sky and sky
                         l1_no_sky_weight = (1.0 - ssim_weight)*(n_no_sky_pixels/n_tot_pixels)
@@ -302,7 +301,6 @@ class Relightable3DGW:
                         loss = l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
                                ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))  
                 else:
-                    ssim_weight = self.config.optimizer.lambda_dssim
                     loss =  l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
                             ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
                 loss.backward()
