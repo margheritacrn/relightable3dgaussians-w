@@ -140,12 +140,12 @@ def training(cfg, testing_iterations, saving_iterations):
             # Original loss 
             loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
 
-        # Normal loss
+        # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"], sky_mask=sky_mask)
+            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"]) # sky_mask=sky_mask)
             loss += cfg.optimizer.lambda_normal*normal_loss
 
-        # Envlight losses
+        # Envlight regularization
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
             viewing_dirs = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
@@ -287,7 +287,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                             if iteration == testing_iterations[0]:
                                 tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
-                                if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm":
+                                if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm" :
                                     continue
                                 if k == "depth":
                                     image_k = apply_depth_colormap(-render_pkg[k][0][...,None])
