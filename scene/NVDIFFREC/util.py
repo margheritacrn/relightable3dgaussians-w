@@ -520,10 +520,7 @@ def linear_to_sRGB(rgb, use_quantile=False, clamp=True):
     return rgb
 
 
-def gamma_correction(rgb: torch.Tensor, gamma=2.2) -> Union[np.ndarray, torch.Tensor]:
-    if isinstance(rgb, np.ndarray):
-        rgb = rgb.clip(min=0.0, max=1.0) + 1e-4
-    elif isinstance(rgb, torch.Tensor):
-        rgb = rgb.clamp(min=0.0, max=1.0) + 1e-4
+def gamma_correction(rgb: torch.Tensor, gamma=2.2):
+    rgb = rgb.clamp(min=0.0, max=1.0) + 1e-4
     rgb = rgb.pow(1. / gamma)
     return rgb
