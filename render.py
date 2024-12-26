@@ -57,7 +57,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             embedding_gt = model.embeddings(view_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt)
         model.envlight.set_base(envlight_sh)
-        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=False)
+        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=True)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
         torch.cuda.synchronize()
@@ -66,10 +66,14 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
         torchvision.utils.save_image(render_pkg["render"], os.path.join(render_path, view.image_name + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
         for k in render_pkg.keys():
-            if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm":
+            if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm" or k == "normal_ref" or k == "alpha":
                 continue
             save_path = os.path.join(model_path, name, "iteration_{}".format(iteration), k)
             makedirs(save_path, exist_ok=True)
+            if k == "diffuse_color":
+                render_pkg[k] = torch.clamp(render_pkg[k], 0.0, 1.0)
+            if k == "albedo":
+                render_pkg[k] = torch.clamp(render_pkg[k], 0.0, 1.0)
             if k == "alpha":
                 render_pkg[k] = apply_depth_colormap(render_pkg["alpha"][0][...,None], min=0., max=1.).permute(2,0,1)
             if k == "depth":
