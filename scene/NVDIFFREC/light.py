@@ -73,7 +73,7 @@ class EnvironmentLight(torch.nn.Module):
 
 
 
-    def get_specular_irradiance(self, roughness: torch.Tensor):
+    def get_specular_light_sh(self, roughness: torch.Tensor):
         """
         The function computes specular lighting SH coefficients by convolving
         envionment light and a Gaussian blur kernel of std = roughness in frequency domain.
@@ -134,8 +134,9 @@ class EnvironmentLight(torch.nn.Module):
         nrmvec = gb_normal
 
         diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
+        diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance)
         shaded_col = diff_col*diffuse_irradiance
-        extras = {"diffuse": diff_col*diffuse_irradiance}
+        extras = {"diffuse": util.gamma_correction(diff_col*diffuse_irradiance)}
 
         if specular:
             # Lookup FG term from lookup texture
@@ -146,7 +147,7 @@ class EnvironmentLight(torch.nn.Module):
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
             roughness = roughness.squeeze(0).squeeze(0) # (N,1)
             # convovlve self.base with SH coeffs of Gaussian blur kernel of std roughness 
-            spec_light = self.get_specular_irradiance(roughness) # (N, 25, 3)
+            spec_light = self.get_specular_light_sh(roughness) # (N, 25, 3)
             # transpose for eval_sh
             spec_light = spec_light.transpose(1,2)
             # compute specular irradiance
@@ -161,7 +162,7 @@ class EnvironmentLight(torch.nn.Module):
             reflectance = F0* fg_lookup[...,0:1] + fg_lookup[...,1:2]
             specular_radiance = spec_irradiance*reflectance
             shaded_col += specular_radiance
-            extras['specular'] = spec_irradiance*reflectance
+            extras['specular'] = util.gamma_correction(spec_irradiance*reflectance)
         else:
             extras['specular'] = None
 
