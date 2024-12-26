@@ -49,7 +49,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     if cam_info.occluders_mask is not None:
         occluders_mask = PILtoTorch(cam_info.occluders_mask, resolution)
     else:
-        sky_mask = None
+        occluders_mask = None
     if cam_info.normal_image is not None:
         resized_normal_image_rgb = PILtoTorch(cam_info.normal_image, resolution)
         gt_normal_image = resized_normal_image_rgb[:3, ...]
