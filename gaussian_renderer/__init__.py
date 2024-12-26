@@ -171,7 +171,8 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     if debug:
         render_extras.update({ 
             "roughness": roughness.repeat(1, 3), 
-            "diffuse_color": diffuse_color})
+            "diffuse_color": diffuse_color,
+            "albedo": albedo})
         if specular_color is not None:          
                 render_extras.update({"specular_color": specular_color})
 
