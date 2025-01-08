@@ -31,7 +31,7 @@ class Relightable3DGW:
             if self.load_iteration == -1:
                 outputs_paths = ["point_cloud", "checkpoint_embeddings", "checkpoint_SHMlp", "envlights_sh"]
                 load_iters = [searchForMaxIteration(os.path.join(self.config.dataset.model_path, op)) for op in outputs_paths]
-                assert len(set(load_iters)) == 1, f"Load iteration- incongruous of saved iterations"
+                assert len(set(load_iters)) == 1, f"Load iteration- incongruous number of saved iterations"
                 self.load_iteration = load_iters[0]
             else:
                 for op in outputs_paths:
