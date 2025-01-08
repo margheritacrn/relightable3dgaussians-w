@@ -259,3 +259,22 @@ def get_half_images(img: torch.tensor, left: bool = True):
     else:
         right_half_images = img[..., :, img.shape[2] // 2:]
         return right_half_images
+
+def insert_zeros(batch: torch.tensor, zeros_idxs: torch.tensor):
+    """The function increases the dimension of the tensors contained in the input batch
+    from n to n+1 by inserting a 0 in a specified position.
+    Args:
+        batch(torch.tensor): batch of N tensors of shape n,
+        zeros_idxs(torch.tensor): positions, in {0,...,n}, where to add the 0 for each tensor.
+    Returns:
+        batch_out(torch.tensor): augmented tensor. """
+    batch_size = batch.shape[0]
+    tensors_dim = batch.shape[1]
+    batch_out = torch.zeros((batch_size, tensors_dim+1),dtype=batch.dtype, device="cuda")
+    # Get indices from 0 to tensors_dim -1
+    tensors_idxs = torch.arange(tensors_dim).expand(batch_size, -1).to("cuda")
+    # Given the indices for tensors dimension establish wheter the index where to insert the 0 comes before (True) or after (False) to handle shifting
+    shift_idxs_mask =  tensors_idxs >= zeros_idxs.unsqueeze(1)
+    shifted_idxs = tensors_idxs + shift_idxs_mask.int()
+    batch_out[torch.arange(batch_size).unsqueeze(1).expand(batch_size, tensors_dim).reshape(-1), shifted_idxs.flatten()] = batch.flatten()
+    return batch_out
