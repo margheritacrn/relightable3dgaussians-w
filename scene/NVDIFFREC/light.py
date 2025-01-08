@@ -12,6 +12,7 @@ from utils.sh_utils import gauss_weierstrass_kernel
 #TODO: add dimensionality control to load_env function
 #TODO: decide wehteher to use equrectangular or cubemap representation/texture for envmaps.
 
+
 class EnvironmentLight(torch.nn.Module):
 
     def __init__(self, base: torch.Tensor, base_is_SH: bool =True, sh_degree : int = 4):
@@ -70,7 +71,6 @@ class EnvironmentLight(torch.nn.Module):
         diffuse_irradiance = (Mn.squeeze(-1)*normal_h.unsqueeze(1)).sum(dim=-1)
  
         return diffuse_irradiance
-
 
 
     def get_specular_light_sh(self, roughness: torch.Tensor):
@@ -189,14 +189,4 @@ class EnvironmentLight(torch.nn.Module):
         rendered_sh = rendered_sh.astype(np.uint8)
         return rendered_sh
 
-
-
-def load_hdr_env(fn, scale=1.0):
-    if os.path.splitext(fn)[1].lower() != ".hdr":
-        raise OSError("Unknown envlight extension")
-    latlong_img = torch.tensor(util.load_image(fn), dtype=torch.float32, device='cuda')*scale
-    cubemap = util.latlong_to_cubemap(latlong_img, [512, 512])
-    envlight_sh = get_SH_from_cubemap(cubemap)
-    l = EnvironmentLight(envlight_sh, base_is_SH=True)
-    return l
 
