@@ -142,7 +142,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"]) # sky_mask=sky_mask)
+            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"], sky_mask=sky_mask)
             loss += cfg.optimizer.lambda_normal*normal_loss
 
         # Envlight regularization
@@ -163,13 +163,13 @@ def training(cfg, testing_iterations, saving_iterations):
             loss += cfg.optimizer.lambda_scale*scale_loss
 
         # Depth regularization
-        if cfg.optimizer.lambda_depth_smooth > 0:
-                depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
-                loss += cfg.optimizer.lambda_depth_smooth*depth_loss
-        if iteration > cfg.optimizer.reg_depth_from_iter: 
-            if cfg.optimizer.lambda_depth > 0:
+        if cfg.optimizer.lambda_depth > 0:
                 sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
                 loss += cfg.optimizer.lambda_depth*sky_depth_loss_ 
+        if iteration > cfg.optimizer.reg_depth_from_iter: 
+            if cfg.optimizer.lambda_depth_smooth > 0:
+                depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
+                loss += cfg.optimizer.lambda_depth_smooth*depth_loss
         loss.backward()
 
         iter_end.record()
