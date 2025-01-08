@@ -11,7 +11,7 @@
 
 import torch
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, get_const_lr_func
+from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, get_const_lr_func, insert_zeros
 from torch import nn
 import os
 from utils.system_utils import mkdir_p
@@ -615,12 +615,14 @@ class GaussianModel:
         stds = self.get_scaling[selected_pts_mask].repeat(N,1) # (n,3)
         stds, sorted_idx = torch.sort(stds, dim=1, descending=True)
         stds = stds[:,:2]
-        means =torch.zeros((stds.size(0), 2),device="cuda") # 2 for norml
+        means = torch.zeros((stds.size(0), 2),device="cuda")
+        # Get 2D samples from standard Gaussian
         samples = torch.normal(mean=means, std=stds)
+        # Project samples in 3D such that the centers lie in the ellipse defined by the two greatest axis
+        samples = insert_zeros(samples, sorted_idx[..., -1])
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1) # (n*N, 3, 3)
         rots = torch.gather(rots, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
-        new_xyz = torch.bmm(rots[:,:,:2], samples.unsqueeze(-1)).squeeze(-1) +  self.get_xyz[selected_pts_mask].repeat(N, 1)
-        # new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1) # sample from gaussian dist
+        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) +  self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_albedo = self._albedo[selected_pts_mask].repeat(N,1)
