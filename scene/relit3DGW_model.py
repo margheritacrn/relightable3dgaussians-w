@@ -50,9 +50,7 @@ class Relightable3DGW:
             if self.config.dataset.eval:
                 self.test_cameras = self.scene.getTestCameras().copy()
             if self.config.num_sky_points > 0:
-                self.gaussians.extend_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
-            if self.config.num_ground_points > 0:
-                self.gaussians.extend_with_ground_gaussians(num_points = self.config.num_ground_points, cameras = self.train_cameras)
+                self.gaussians.augment_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
             # self.scene.cameras_extent = self.gaussians.get_scene_extent(self.train_cameras)
             self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
             self.envlight_sh_mlp.cuda()

@@ -105,7 +105,7 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
     
-    #TODO. remove return_delta, it's here not to edit gaussian_renderer module.
+    #TODO: remove return_delta and NORMALIZATION (not needed) , it's here not to edit gaussian_renderer module.
     def get_normal(self, dir_pp_normalized=None, return_delta=False, normalize=False):
         normal_axis = self.get_minimum_axis
         normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
@@ -116,7 +116,7 @@ class GaussianModel:
         else:
             return normal_axis
 
-
+    #TODO: remove
     def get_normal_gshader(self, dir_pp_normalized=None, return_delta=False, normalize=False):
         normal_axis = self.get_minimum_axis
         normal_axis = normal_axis
