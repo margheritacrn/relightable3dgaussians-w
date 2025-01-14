@@ -148,6 +148,9 @@ def render_and_evaluate(cfg):
             gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, init_rot_z, init_rot_y, init_rot_x, 'real')
             gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, best_angle[2], best_angle[0], best_angle[1], 'real')
 
+            # Save best_envmap:
+            np.save(os.path.join(renders_path, "best_envmap" + view.image_name+".npy"), gt_envmap_sh_rot)
+
             render_best_angle_envmap = sh_utility.sh_render(gt_envmap_sh_rot.T, width = 360)
             render_best_angle_envmap = (render_best_angle_envmap - render_best_angle_envmap.min()) / (render_best_angle_envmap.max() - render_best_angle_envmap.min()) * 255
             render_best_angle_envmap = render_best_angle_envmap.astype(np.uint8)
