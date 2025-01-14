@@ -163,10 +163,10 @@ def training(cfg, testing_iterations, saving_iterations):
             loss += cfg.optimizer.lambda_scale*scale_loss
 
         # Depth regularization
-        if cfg.optimizer.lambda_depth > 0:
+        if cfg.optimizer.lambda_depth_sky > 0:
                 sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
-                loss += cfg.optimizer.lambda_depth*sky_depth_loss_ 
-        if iteration > cfg.optimizer.reg_depth_from_iter: 
+                loss += cfg.optimizer.lambda_depth_sky*sky_depth_loss_ 
+        if iteration > cfg.optimizer.smooth_depth_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
                 depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
                 loss += cfg.optimizer.lambda_depth_smooth*depth_loss
