@@ -233,7 +233,7 @@ class GaussianModel:
 
 
 
-    def extend_with_sky_gaussians(self, num_points: int, cameras):
+    def augment_with_sky_gaussians(self, num_points: int, cameras):
         sky_xyz, _ = self.get_sky_xyz(num_points, cameras)
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
 
