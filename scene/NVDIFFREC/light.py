@@ -100,7 +100,7 @@ class EnvironmentLight(torch.nn.Module):
 
 
 
-    def shade(self, gb_pos, gb_normal, albedo, kr, km, view_pos, specular=False, tone=True):
+    def shade(self, gb_pos, gb_normal, albedo, kr, km, view_pos, specular=True, tone=True):
         """
        The function returns emitted radiance in outgoing direction view_pos. If specular is 
        True a microfacet reflectance model is assumed, otherwise the model is Lambertian. 
