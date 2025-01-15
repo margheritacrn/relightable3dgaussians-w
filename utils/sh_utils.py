@@ -128,11 +128,11 @@ def SH2RGB(sh):
 
 def gauss_weierstrass_kernel(roughness, sh_degree):
     """The function computes the sh_dim coefficients of
-    Gauss Weierstrass kernel for smoothing in SH domain. The standard
-    deviation of the kernel is proportional to the roughness input value.
+    Gauss Weierstrass kernel for smoothing in SH domain. In Euclidean space 
+    the kernel corresponds to a Gaussian kernel of std proportional to the roughness input value.
     Args:
         roughness (torch.tensor): [..., 1]
-        sh_degre (int): degree of the spherical harmonics coefficients.
+        sh_degree (int): degree of the spherical harmonics coefficients.
     Returns:
         SH coefficients of Gaussian blur kernel of sigma = sqrt(roughness)
     """
