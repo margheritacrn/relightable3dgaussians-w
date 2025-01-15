@@ -123,7 +123,7 @@ class Relightable3DGW:
         lighting_conditions = [viewpoint_cam.image_name[:-9] if viewpoint_cam.image_name[0] != "C" else viewpoint_cam.image_name[:3] for viewpoint_cam in viewpoint_stack]
         sh_priors_keys = [next((key for key in self.envlight_sh_priors if lc in key), None) for lc in lighting_conditions]
         target_sh = torch.stack([torch.tensor(self.envlight_sh_priors[key], dtype=torch.float32) for key in sh_priors_keys ])
-        train_data = TensorDataset(imgs, target_sh)
+        train_data = TensorDataset(imgs, target_sh[:, :(self.config.envlight_sh_degree + 1)**2, :])
         batch_size = 32
         dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
         self.envlight_sh_mlp.initialize(dataloader, epochs = 100)
