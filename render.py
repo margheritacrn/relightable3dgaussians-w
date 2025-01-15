@@ -70,7 +70,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
                 continue
             save_path = os.path.join(model_path, name, "iteration_{}".format(iteration), k)
             makedirs(save_path, exist_ok=True)
-            if k == "diffuse_color":
+            if k == "diffuse_color" or k=="specular_color":
                 render_pkg[k] = torch.clamp(render_pkg[k], 0.0, 1.0)
             if k == "albedo":
                 render_pkg[k] = torch.clamp(render_pkg[k], 0.0, 1.0)
