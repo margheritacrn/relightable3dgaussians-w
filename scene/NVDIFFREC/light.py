@@ -100,7 +100,7 @@ class EnvironmentLight(torch.nn.Module):
 
 
 
-    def shade(self, gb_pos, gb_normal, albedo, ks, kr, km, view_pos, specular=True, tone=True):
+    def shade(self, gb_pos, gb_normal, albedo, kr, km, view_pos, specular=False, tone=True):
         """
        The function returns emitted radiance in outgoing direction view_pos. If specular is 
        True a microfacet reflectance model is assumed, otherwise the model is Lambertian. 
@@ -127,8 +127,7 @@ class EnvironmentLight(torch.nn.Module):
         if specular:
             metalness = km
             roughness = kr # (H,W,N,1)
-            specularity  = ks
-            diff_col = (1-metalness)*diff_col
+            diff_col = (1-metalness)*albedo
 
         reflvec = util.safe_normalize(util.reflect(wo, gb_normal))
         nrmvec = gb_normal
@@ -136,7 +135,7 @@ class EnvironmentLight(torch.nn.Module):
         diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
         diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance)
         shaded_col = diff_col*diffuse_irradiance
-        extras = {"diffuse": util.gamma_correction(diff_col*diffuse_irradiance)}
+        extras = {"diffuse": util.gamma_correction(shaded_col)}
 
         if specular:
             # Lookup FG term from lookup texture
@@ -150,7 +149,7 @@ class EnvironmentLight(torch.nn.Module):
             spec_light = self.get_specular_light_sh(roughness) # (N, 25, 3)
             # transpose for eval_sh
             spec_light = spec_light.transpose(1,2)
-            # compute specular irradiance
+            # compute specular irradiance in reflection direction
             spec_irradiance = eval_sh(self.sh_degree, spec_light, reflvec.squeeze())
             # adjust dimensions
             spec_irradiance = spec_irradiance[None, None, ...] # (H, W, N, 3)
