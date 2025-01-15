@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, envlight_loss, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, envlight_loss, envlight_loss_without_normals, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -151,7 +151,8 @@ def training(cfg, testing_iterations, saving_iterations):
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
             # Create a copy of the normals without gradient tracking for envlight loss computation
             normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm).data.clone() #NOTE: could just use detach()
-            envl_loss = envlight_loss(model.envlight, normals)
+            envl_loss = envlight_loss(model.envlight, normals, N_dirs=10)
+            env_los_without_normals = envlight_loss_without_normals(model.envlight, N_samples=10)
             loss += cfg.optimizer.lambda_envlight*envl_loss
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
             envl_init_loss = envlight_prior_loss(envlight_sh, gt_envlight_sh_prior)
@@ -166,7 +167,7 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.optimizer.lambda_depth_sky > 0:
                 sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
                 loss += cfg.optimizer.lambda_depth_sky*sky_depth_loss_ 
-        if iteration > cfg.optimizer.smooth_depth_iter: 
+        if iteration > cfg.optimizer.smooth_depth_from_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
                 depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
                 loss += cfg.optimizer.lambda_depth_smooth*depth_loss
@@ -287,7 +288,9 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                             if iteration == testing_iterations[0]:
                                 tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
-                                if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm" :
+                                if "diffuse" in k:
+                                    image_k = render_pkg[k]
+                                if render_pkg[k].dim()<3 or k=="render" :
                                     continue
                                 if k == "depth":
                                     image_k = apply_depth_colormap(-render_pkg[k][0][...,None])
@@ -300,12 +303,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                                         render_pkg[k] = 0.5 + (0.5*render_pkg[k]) # (-1, 1) -> (0, 1)
                                     image_k = torch.clamp(render_pkg[k], 0.0, 1.0)
                                 tb_writer.add_images(config['name'] + "_view_{}/{}".format(viewpoint.image_name, k), image_k[None], global_step=iteration)
-                            
-                            """if renderArgs[0].brdf:
-                                lighting = render_lighting(scene.gaussians, resolution=(512, 1024))
-                                if tb_writer:
-                                    tb_writer.add_images(config['name'] + "/lighting", lighting[None], global_step=iteration)
-                            """
+
                     l1_test = l1_loss(images, gts)
                     psnr_test = psnr(images, gts).mean()  
                     print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))

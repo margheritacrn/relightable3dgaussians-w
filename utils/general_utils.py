@@ -273,7 +273,7 @@ def insert_zeros(batch: torch.tensor, zeros_idxs: torch.tensor):
     batch_out = torch.zeros((batch_size, tensors_dim+1),dtype=batch.dtype, device="cuda")
     # Get indices from 0 to tensors_dim -1
     tensors_idxs = torch.arange(tensors_dim).expand(batch_size, -1).to("cuda")
-    # Given the indices for tensors dimension establish wheter the index where to insert the 0 comes before (True) or after (False) to handle shifting
+    # Given the indices for tensors dimension establish whether the index where to insert the 0 comes before (True) or after (False) to handle shifting
     shift_idxs_mask =  tensors_idxs >= zeros_idxs.unsqueeze(1)
     shifted_idxs = tensors_idxs + shift_idxs_mask.int()
     batch_out[torch.arange(batch_size).unsqueeze(1).expand(batch_size, tensors_dim).reshape(-1), shifted_idxs.flatten()] = batch.flatten()
