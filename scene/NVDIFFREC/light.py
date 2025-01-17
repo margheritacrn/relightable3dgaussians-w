@@ -153,6 +153,7 @@ class EnvironmentLight(torch.nn.Module):
             spec_irradiance = eval_sh(self.sh_degree, spec_light, reflvec.squeeze())
             # adjust dimensions
             spec_irradiance = spec_irradiance[None, None, ...] # (H, W, N, 3)
+            spec_irradiance = torch.nn.functional.relu(spec_irradiance)
             # Compute aggregate lighting
             if metalness is None:
                 F0 = torch.ones_like(albedo) * 0.04  # [1, H, W, 3]
@@ -161,7 +162,7 @@ class EnvironmentLight(torch.nn.Module):
             reflectance = F0* fg_lookup[...,0:1] + fg_lookup[...,1:2]
             specular_radiance = spec_irradiance*reflectance
             shaded_col += specular_radiance
-            extras['specular'] = util.gamma_correction(spec_irradiance*reflectance)
+            extras['specular'] = util.gamma_correction(specular_radiance)
         else:
             extras['specular'] = None
 
