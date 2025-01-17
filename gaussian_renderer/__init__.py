@@ -55,7 +55,7 @@ def normalize_normal_inplace(normal, alpha):
     fg_mask = (alpha[None,...]>0.).repeat(3, 1, 1)
     normal = torch.where(fg_mask, torch.nn.functional.normalize(normal, p=2, dim=0), normal)
 
-def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=False):
+def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=True):
     """
     Render the scene. 
     
