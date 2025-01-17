@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, envlight_loss, envlight_loss_without_normals, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -149,10 +149,9 @@ def training(cfg, testing_iterations, saving_iterations):
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
             viewing_dirs = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
-            # Create a copy of the normals without gradient tracking for envlight loss computation
-            normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm).data.clone() #NOTE: could just use detach()
-            envl_loss = envlight_loss(model.envlight, normals, N_dirs=10)
-            env_los_without_normals = envlight_loss_without_normals(model.envlight, N_samples=10)
+            with torch.no_grad():
+                normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
+            envl_loss = envlight_loss(model.envlight, normals)
             loss += cfg.optimizer.lambda_envlight*envl_loss
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
             envl_init_loss = envlight_prior_loss(envlight_sh, gt_envlight_sh_prior)
@@ -194,7 +193,6 @@ def training(cfg, testing_iterations, saving_iterations):
                             iter_start.elapsed_time(iter_end), testing_iterations,
                             model, render, (cfg.pipe, background))
             if iteration in saving_iterations or iteration == cfg.optimizer.iterations:
-                #TODO: turn into  model.save iteration
                 print(f" ITER: {iteration} saving model")
                 model.save(iteration)
 
@@ -274,6 +272,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         model.envlight.set_base(envlight_sh)
                         render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, *renderArgs)
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
+                        diffuse_col = torch.clamp(render_pkg["diffuse_color"], 0.0, 1.0)
                         resize_image = transforms.ToPILImage()(image)
                         resized_image = resize_transform(resize_image)
                         final_image = transforms.ToTensor()(resized_image).cuda()
@@ -285,6 +284,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         gts = torch.cat((gts, final_gt_image.unsqueeze(0)), dim=0)
                         if tb_writer and (idx < 10):
                             tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/diffuse_col".format(viewpoint.image_name), diffuse_col[None], global_step=iteration)
                             if iteration == testing_iterations[0]:
                                 tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
