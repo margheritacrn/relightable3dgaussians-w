@@ -142,7 +142,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"], sky_mask=sky_mask)
+            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"])
             loss += cfg.optimizer.lambda_normal*normal_loss
 
         # Envlight regularization
