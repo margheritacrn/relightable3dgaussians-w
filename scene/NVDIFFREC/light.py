@@ -100,27 +100,27 @@ class EnvironmentLight(torch.nn.Module):
 
 
 
-    def shade(self, gb_pos, gb_normal, albedo, kr, km, view_pos, specular=True, tone=True):
+    def shade(self, gb_pos:torch.tensor, gb_normal:torch.tensor, albedo:torch.tensor, view_pos:torch.tensor,
+              kr:torch.tensor=None, km:torch.tensor=None, specular:bool=True, tone:bool=True):
         """
-       The function returns emitted radiance in outgoing direction view_pos. If specular is 
-       True a microfacet reflectance model is assumed, otherwise the model is Lambertian. 
-       In the specular case the final radiance is the sum of diffuse and specular radiances.
+       The function returns the emitted radiance in outgoing direction view_pos. If specular is 
+       True a microfacet Cook-Torrane reflectance model is assumed, otherwise the model is assumed to be Lambertian. 
+       In the specular case the final radiance is the sum of the diffuse and specular radiances.
         Args:
-            gb_pos: world position
-            gb_normal: normal vector
-            albedo : albedo of the surface, base color
-            ks: specularity
-            kr: roughness
-            km: metalness
-            view_pos: viewing direction
-            envlight: SH coefficients of environment light
+            gb_pos: world positions HxWxNx3
+            gb_normal: normal vectors HxWxNx3
+            albedo : albedo of the surface, base color HxWxNx3
+            kr: roughness of points HxWxNx1
+            km: metalness of points HxWxNx1
+            view_pos: viewing directions HxWxNx3
+            envlight: SH coefficients of environment light 1x#sh_coeffsx3
         Retursn:
-            rgb (torch.Tensor): shaded rgb color of shape 1 x 1 x N x 3.
+            rgb (torch.Tensor): shaded rgb color of shape HxWxNx3.
             extras (dict): dictionary storing diffuse and specular radiance.
         """
         assert self.base_is_SH, "envlight can be only represented through Spherical Harmonics"
 
-        # (H, W, N, C)
+        # (H, W, N, 3)
         wo = util.safe_normalize(view_pos - gb_pos)
 
         diff_col = albedo
@@ -164,7 +164,7 @@ class EnvironmentLight(torch.nn.Module):
             shaded_col += specular_radiance
             extras['specular'] = util.gamma_correction(specular_radiance)
         else:
-            extras['specular'] = None
+            extras['specular'] = torch.zeros_like(extras["diffuse"])
 
         if tone:
             # apply tone mapping and clamp in range [0,1]: linear --> sRGB
