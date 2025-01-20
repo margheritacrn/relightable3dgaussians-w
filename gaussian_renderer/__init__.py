@@ -21,9 +21,7 @@ from utils.general_utils import flip_align_view
 # from scene.NVDIFFREC import extract_env_map
 from scene.NVDIFFREC.light import EnvironmentLight
 import numpy as np
-#TODO: edit render lighting and shade function (rewrite)
-#TODO: remove references to brdf
-#TODO: consider whether to add metallic_color to the rendered outputs
+
 
 def rendered_world2cam(viewpoint_cam, normal, alpha, bg_color):
     # normal: (3, H, W), alpha: (H, W), bg_color: (3)
@@ -38,6 +36,7 @@ def rendered_world2cam(viewpoint_cam, normal, alpha, bg_color):
     normal_cam = normal_cam*alpha[None,...] + background*(1. - alpha[None,...])
 
     return normal_cam
+
 
 def render_surf_normal(viewpoint_cam, depth):
     # depth: (H, W), bg_color: (3), alpha: (H, W)
@@ -55,7 +54,18 @@ def normalize_normal_inplace(normal, alpha):
     fg_mask = (alpha[None,...]>0.).repeat(3, 1, 1)
     normal = torch.where(fg_mask, torch.nn.functional.normalize(normal, p=2, dim=0), normal)
 
-def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None, debug=True):
+
+def get_shaded_colors_precomp(envlight: EnvironmentLight, gb_pos: torch.tensor, normal: torch.tensor, albedo: torch.tensor, view_pos: torch.tensor,
+                       roughness:torch.tensor=None, metalness:torch.tensor=None, is_sky:bool=False):
+    if is_sky:
+        return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
+                               view_pos[None, None, ...], specular=False)
+    else:
+        return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
+                              view_pos[None, None, ...], roughness[None, None, ...], metalness[None, None, ...])
+
+
+def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, debug=True):
     """
     Render the scene. 
     
@@ -108,34 +118,31 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     viewing_dirs = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1))
     viewing_dirs_normalized = safe_normalize(viewing_dirs) # (N, 3)
 
-    shs = None
-    colors_precomp = None
-    if colors_precomp is None:
-        gb_pos = pc.get_xyz # (N, 3) 
-        view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
+    sky_gaussians_mask = pc.get_is_sky.squeeze() # (N)
+    gb_pos = pc.get_xyz # (N, 3) 
+    view_pos = viewpoint_camera.camera_center.repeat(pc.get_opacity.shape[0], 1) # (N, 3) 
 
-        albedo = pc.get_albedo # (N, 3)
-        normal = pc.get_normal(dir_pp_normalized=viewing_dirs_normalized) # (N, 3)
-        roughness = pc.get_roughness # (N, 1) 
-        metalness = pc.get_metalness # (N,1)
-        color, brdf_pkg = envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
-                                         roughness[None, None, ...], metalness[None, None, ...], view_pos[None, None, ...])
+    albedo = pc.get_albedo # (N, 3)
+    normal = pc.get_normal(dir_pp_normalized=viewing_dirs_normalized) # (N, 3)
+    roughness = pc.get_roughness # (N, 1) 
+    metalness = pc.get_metalness # (N,1)
 
-        colors_precomp = color.squeeze() # (N, 3) 
-        diffuse_color = brdf_pkg['diffuse'].squeeze() # (N, 3)
-        if brdf_pkg['specular'] is not None:
-            specular_color = brdf_pkg['specular'].squeeze() # (N, 3)
-        else:
-            specular_color = None
+    color_non_sky_gaussians, brdf_pkg_non_sky_gaussians = get_shaded_colors_precomp(envlight, gb_pos[~sky_gaussians_mask], normal[~sky_gaussians_mask], albedo[~sky_gaussians_mask],
+                                                                                view_pos[~sky_gaussians_mask], roughness[~sky_gaussians_mask], metalness[~sky_gaussians_mask])
+    color_sky_gaussians, brdf_pkg_sky_gaussians = get_shaded_colors_precomp(envlight, gb_pos[sky_gaussians_mask], normal[sky_gaussians_mask], albedo[sky_gaussians_mask],
+                                                                                view_pos[sky_gaussians_mask], is_sky=True)
 
-    else:
-        colors_precomp = override_color
+    colors_precomp = torch.cat((color_non_sky_gaussians.squeeze(), color_sky_gaussians.squeeze()), dim=0)
+
+    diffuse_color = torch.cat((brdf_pkg_non_sky_gaussians['diffuse'].squeeze(), brdf_pkg_sky_gaussians['diffuse'].squeeze()), dim=0)
+    specular_color = torch.cat((brdf_pkg_non_sky_gaussians['specular'].squeeze(), brdf_pkg_sky_gaussians['specular'].squeeze()), dim=0)
+
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     rendered_image, radii = rasterizer(
         means3D = means3D,
         means2D = means2D,
-        shs = shs,
+        shs = None,
         colors_precomp = colors_precomp,
         opacities = opacity,
         scales = scales,
@@ -151,7 +158,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     }
 
     # Render depth and normals
-    # Get Gaussians depth as intersection between viewing dirs and splat (assumed planar)
+    # Get Gaussians depth as z coordinate of their position in camera space
     p_hom = torch.cat([pc.get_xyz, torch.ones_like(pc.get_xyz[...,:1])], -1).unsqueeze(-1)
     p_view = torch.matmul(viewpoint_camera.world_view_transform.transpose(0,1), p_hom)
     p_view = p_view[...,:3,:]
@@ -160,18 +167,17 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
 
     render_extras = {"depth": depth}
     normal = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
-    # get normal (already directed towards the camera) in camera coords
+    # Get normals (already directed towards the camera) in camera coords
     R_w2c = torch.tensor(viewpoint_camera.R).cuda().to(torch.float32)
     normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
-  
     render_extras.update({"normal": normal})
+
     if debug:
         render_extras.update({ 
             "roughness": roughness.repeat(1, 3), 
             "diffuse_color": diffuse_color,
+            "specular_color": specular_color,
             "albedo": albedo})
-        if specular_color is not None:          
-                render_extras.update({"specular_color": specular_color})
 
     out_extras = {}
     for k in render_extras.keys():
@@ -228,8 +234,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     # Get surface normal from depth map.
     normal_ref = render_surf_normal(viewpoint_camera, out_extras['depth'][0])
     out_extras["normal_ref"] = normal_ref*(out_extras["alpha"]).detach()
-    # out_extras["normal_ref"] = render_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color=bg_color, alpha=out_extras['alpha'][0])
-    # normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
 
     out.update(out_extras)
     return out
