@@ -176,7 +176,7 @@ class GaussianModel:
         self._albedo = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 3), device="cuda").requires_grad_(True))
         self._metalness = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
         self._roughness = nn.Parameter(self.default_roughness*torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
-        self._is_sky =  torch.zeros(fused_point_cloud.shape[0], dtype=torch.bool) 
+        self._is_sky =  torch.zeros((fused_point_cloud.shape[0], 1), dtype=torch.bool, device="cuda") 
 
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
@@ -226,7 +226,8 @@ class GaussianModel:
         sky_opacity = torch.ones((sky_xyz.shape[0], 1), device=self._opacity.device, requires_grad=True)
         self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
 
-        self._is_sky = torch.ones(sky_xyz.shape[0].shape[0], dtype=torch.bool)
+        self._is_sky = torch.cat((self._is_sky, torch.ones((sky_xyz.shape[0], 1), dtype=torch.bool, device=self._is_sky.device)), dim=0)
+
 
         dist2 = torch.clamp_min(distCUDA2(sky_xyz.float().cuda()), 0.0000001)
         sky_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -241,7 +242,7 @@ class GaussianModel:
         sky_f_rest = torch.zeros((sky_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
         self._features_rest = nn.Parameter(torch.cat([self._features_rest, sky_f_rest]))
 
-    #TODO: remove self.normal2 and fetures_rest
+    #TODO: fetures_rest
     def training_setup(self, envlight, embeddings, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -350,6 +351,7 @@ class GaussianModel:
         metalness = self._metalness.detach().cpu().numpy()
         is_sky = self._is_sky.cpu().numpy()
         
+        #TODO: remove f_rest and normals and refactor if below (useless)
         if viewer_fmt:
             albedo = 0.5 + (0.5*normals)
             f_rest = np.zeros((f_rest.shape[0], 45))
