@@ -44,6 +44,7 @@ class GaussianModel:
         self._opacity = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
+        self._is_sky = torch.empty(0)
 
 
 
@@ -59,6 +60,7 @@ class GaussianModel:
         self.roughness_activation = torch.sigmoid
         self.roughness_bias = 0.
         self.default_roughness = 0.6
+
 
         self.optimizer = None
 
@@ -135,6 +137,10 @@ class GaussianModel:
     @property
     def get_minimum_axis(self):
         return get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
+    
+    @property
+    def get_is_sky(self):
+        return self._is_sky
 
 
     def oneupSHdegree(self):
@@ -170,6 +176,7 @@ class GaussianModel:
         self._albedo = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 3), device="cuda").requires_grad_(True))
         self._metalness = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
         self._roughness = nn.Parameter(self.default_roughness*torch.ones((fused_point_cloud.shape[0], 1), device="cuda").requires_grad_(True))
+        self._is_sky =  torch.zeros(fused_point_cloud.shape[0], dtype=torch.bool) 
 
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
@@ -218,6 +225,8 @@ class GaussianModel:
 
         sky_opacity = torch.ones((sky_xyz.shape[0], 1), device=self._opacity.device, requires_grad=True)
         self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
+
+        self._is_sky = torch.ones(sky_xyz.shape[0].shape[0], dtype=torch.bool)
 
         dist2 = torch.clamp_min(distCUDA2(sky_xyz.float().cuda()), 0.0000001)
         sky_scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 3)
@@ -324,6 +333,7 @@ class GaussianModel:
             l.append('rot_{}'.format(i))
         l.append('roughness')
         l.append('metalness')
+        l.append('is_sky')
         return l
 
 
@@ -338,6 +348,7 @@ class GaussianModel:
         rotation = self._rotation.detach().cpu().numpy()
         roughness = self._roughness.detach().cpu().numpy()
         metalness = self._metalness.detach().cpu().numpy()
+        is_sky = self._is_sky.cpu().numpy()
         
         if viewer_fmt:
             albedo = 0.5 + (0.5*normals)
@@ -348,9 +359,9 @@ class GaussianModel:
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         if not viewer_fmt:
-            attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness), axis=1)
+            attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness, is_sky), axis=1)
         else:
-            attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness), axis=1)
+            attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness, is_sky), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -396,6 +407,7 @@ class GaussianModel:
 
         roughness = np.asarray(plydata.elements[0]["roughness"])[..., np.newaxis]
         metalness = np.asarray(plydata.elements[0]["metalness"])[..., np.newaxis]
+        is_sky = np.asarray(plydata.elements[0]["is_sky"])[..., np.newaxis]
 
 
 
@@ -407,6 +419,7 @@ class GaussianModel:
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
         self._roughness = nn.Parameter(torch.tensor(roughness, dtype=torch.float, device="cuda").requires_grad_(True))
         self._metalness = nn.Parameter(torch.tensor(metalness, dtype=torch.float, device="cuda").requires_grad_(True))
+        self._is_sky = torch.tensor(is_sky, dtype=torch.bool, device="cuda")
 
         self.active_sh_degree = self.max_sh_degree
 
@@ -462,6 +475,7 @@ class GaussianModel:
         self._rotation = optimizable_tensors["rotation"]
         self._roughness = optimizable_tensors["roughness"]
         self._metalness = optimizable_tensors["metalness"]
+        self._is_sky = self._is_sky[valid_points_mask]
 
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
@@ -496,7 +510,7 @@ class GaussianModel:
 
 
     def densification_postfix(self, new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, \
-                              new_roughness, new_metalness):
+                              new_roughness, new_metalness, new_is_sky):
         d = {"xyz": new_xyz,
         "albedo": new_albedo,
         "f_rest": new_features_rest,
@@ -518,6 +532,7 @@ class GaussianModel:
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
+        self._is_sky = torch.cat((self._is_sky, new_is_sky), dim=0)
 
 
     def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
@@ -549,8 +564,9 @@ class GaussianModel:
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         new_roughness = self._roughness[selected_pts_mask].repeat(N,1)
         new_metalness = self._metalness[selected_pts_mask].repeat(N,1)
+        new_is_sky = self._is_sky[selected_pts_mask].repeat(N,1)
         self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacity, new_scaling, new_rotation, 
-                                   new_roughness, new_metalness)
+                                   new_roughness, new_metalness, new_is_sky)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
@@ -571,6 +587,7 @@ class GaussianModel:
         new_rotation = self._rotation[selected_pts_mask]
         new_roughness = self._roughness[selected_pts_mask]
         new_metalness = self._metalness[selected_pts_mask]
+        new_is_sky = self._is_sky[selected_pts_mask]
 
         with torch.no_grad():
             normals = self.get_normal(dir_pp_normalized=viewing_dir, normalize=True)
@@ -578,7 +595,7 @@ class GaussianModel:
 
 
         self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, 
-                                   new_roughness, new_metalness)
+                                   new_roughness, new_metalness, new_is_sky)
 
 
     def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, viewing_dir):
