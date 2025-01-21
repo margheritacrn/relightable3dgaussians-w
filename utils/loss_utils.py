@@ -123,7 +123,7 @@ def sky_depth_loss(depth_map, sky_mask, gamma = 0.02):
     sky_depth = depth_map*nosky_mask.expand_as(depth_map)
     mean_depth_sky = (sky_depth).sum()/n_sky_pixels
     loss = torch.exp(-gamma*(mean_depth_sky-mean_depth_no_sky))
-    return loss
+    return mean_depth_sky, loss
 
 
 def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
