@@ -125,6 +125,7 @@ def sky_depth_loss(depth_map, sky_mask, gamma = 0.02):
     loss = torch.exp(-gamma*(mean_depth_sky-mean_depth_no_sky))
     return loss
 
+
 def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
     """Computes the predicted normal supervision loss defined in ref-NeRF."""
     # normal: (3, H, W), normal_ref: (3, H, W), alpha: (3, H, W)

@@ -112,6 +112,14 @@ class GaussianModel:
         if normalize:
             normal_axis = torch.nn.functional.normalize(normal_axis, p=2, dim=1)
         return normal_axis
+    
+
+    def get_depth(self, viewpoint_camera):
+        p_hom = torch.cat([self._xyz, torch.ones_like(self._xyz[...,:1])], -1).unsqueeze(-1)
+        p_view = torch.matmul(viewpoint_camera.world_view_transform.transpose(0,1), p_hom)
+        p_view = p_view[...,:3,:]
+        depth = p_view.squeeze()[...,2:3]
+        return depth
 
 
     @property

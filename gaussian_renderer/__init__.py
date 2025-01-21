@@ -159,13 +159,10 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
 
     # Render depth and normals
     # Get Gaussians depth as z coordinate of their position in camera space
-    p_hom = torch.cat([pc.get_xyz, torch.ones_like(pc.get_xyz[...,:1])], -1).unsqueeze(-1)
-    p_view = torch.matmul(viewpoint_camera.world_view_transform.transpose(0,1), p_hom)
-    p_view = p_view[...,:3,:]
-    depth = p_view.squeeze()[...,2:3]
+    depth = pc.get_depth(viewpoint_camera)
     depth = depth.repeat(1,3)
-
     render_extras = {"depth": depth}
+
     normal = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
     # Get normals (already directed towards the camera) in camera coords
     R_w2c = torch.tensor(viewpoint_camera.R).cuda().to(torch.float32)
