@@ -124,6 +124,7 @@ def render_sets_training(model: Relightable3DGW, skip_train : bool, skip_test : 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
     print("Rendering " + cfg.dataset.model_path)
+    cfg.dataset.eval = True
     render_sets(cfg, cfg.skip_train, cfg.skip_test)
     # All done
     print("\nRendering complete.")

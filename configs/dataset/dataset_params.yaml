@@ -5,4 +5,4 @@ images: "images"
 resolution: -1
 white_background: False
 data_device: "cuda"
-eval: True
+eval: False

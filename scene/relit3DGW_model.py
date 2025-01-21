@@ -40,15 +40,13 @@ class Relightable3DGW:
             self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
             self.scene:  Scene = Scene(self.config.dataset, self.gaussians, load_iteration=self.load_iteration)
             self.train_cameras = self.scene.getTrainCameras().copy()
-            if self.config.dataset.eval:
-                self.test_cameras = self.scene.getTestCameras().copy()
+            self.test_cameras = self.scene.getTestCameras().copy()
             self.load_model()
         else:
             self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
             self.scene:  Scene = Scene(self.config.dataset, self.gaussians)
             self.train_cameras = self.scene.getTrainCameras().copy()
-            if self.config.dataset.eval:
-                self.test_cameras = self.scene.getTestCameras().copy()
+            self.test_cameras = self.scene.getTestCameras().copy()
             if self.config.num_sky_points > 0:
                 self.gaussians.augment_with_sky_gaussians(num_points = self.config.num_sky_points, cameras = self.train_cameras)
             # self.scene.cameras_extent = self.gaussians.get_scene_extent(self.train_cameras)

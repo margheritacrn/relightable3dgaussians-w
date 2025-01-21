@@ -197,6 +197,7 @@ def render_and_evaluate(cfg):
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
     print("Rendering with GT illumination" + cfg.dataset.model_path)
+    cfg.dataset.eval = True
     render_and_evaluate(cfg)
     print("\nEnd")
 
