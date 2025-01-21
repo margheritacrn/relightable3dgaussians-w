@@ -112,7 +112,7 @@ def predicted_depth_loss(depth_map, nosky_mask=None):
 
 
 def sky_depth_loss(depth_map, sky_mask, gamma = 0.02):
-    # Compute mean depth in no-sky region and sky region and compare difference
+    """The function computes the mean depth in no-sky region and sky region and compares the difference"""
     nosky_mask = 1 - sky_mask
     n_sky_pixels = torch.sum(nosky_mask == 1)
     if n_sky_pixels == 0:
