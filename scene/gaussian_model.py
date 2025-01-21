@@ -371,7 +371,8 @@ class GaussianModel:
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+        opacities = torch.where(self._is_sky, self._opacity, opacities_new)
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
 
