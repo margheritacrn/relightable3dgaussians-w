@@ -47,7 +47,7 @@ def process_environment_map_image(img_path, scale_high, threshold):
     return coeffs
 
 
-def render_and_evaluate(cfg):
+def render_and_evaluate(cfg, eval_all=False):
     with torch.no_grad():
         model = Relightable3DGW(cfg)
 
@@ -59,7 +59,7 @@ def render_and_evaluate(cfg):
         config_test = importlib.import_module("test_config").config
         config_test_names = [key.split(".")[0] for key in config_test.keys()]
 
-        if cfg.eval_all:
+        if eval_all:
             test_cameras = model.scene.getTestCameras()
         else:
             test_cameras = [c for c in model.scene.getTestCameras() if c.image_name in config_test_names]
@@ -75,7 +75,7 @@ def render_and_evaluate(cfg):
         for view in tqdm(test_cameras):
             print(view.image_name)
 
-            if cfg.eval_all:
+            if eval_all:
                 if "_DSC" in view.image_name:
                     lighting_condition = view.image_name.split("_DSC")[0]
                 else:
@@ -99,7 +99,7 @@ def render_and_evaluate(cfg):
             gt_image = view.original_image.cuda()
 
             # Get eval mask
-            if cfg.eval_all and view.image_name not in config_test.keys():
+            if eval_all and view.image_name not in config_test.keys():
                 occluders_mask_path = os.path.join(cfg.dataset.source_path, "masks", view.image_name + ".png")
                 occluders_mask = cv2.imread(occluders_mask_path, cv2.IMREAD_GRAYSCALE)
                 occluders_mask = cv2.resize(occluders_mask, (gt_image.shape[2], gt_image.shape[1]))
@@ -198,7 +198,7 @@ def render_and_evaluate(cfg):
 def main(cfg: DictConfig):
     print("Rendering with GT illumination" + cfg.dataset.model_path)
     cfg.dataset.eval = True
-    render_and_evaluate(cfg)
+    render_and_evaluate(cfg, cfg.eval_all)
     print("\nEnd")
 
 
