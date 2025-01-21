@@ -164,7 +164,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Depth regularization
         if cfg.optimizer.lambda_depth_sky > 0:
-                sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
+                mean_depth_sky, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
                 loss += cfg.optimizer.lambda_depth_sky*sky_depth_loss_ 
         if iteration > cfg.optimizer.smooth_depth_from_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
@@ -207,6 +207,13 @@ def training(cfg, testing_iterations, saving_iterations):
                     size_threshold = 20 if iteration > cfg.optimizer.opacity_reset_interval else None
                     model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
                     grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optimizer.densify_grad_threshold)
+
+                # Extend sky Gaussians, only if sky depth loss is enabled
+                if cfg.optimizer.lambda_depth_sky > 0 and iteration % cfg.optimizer.extend_sky_gauss_interval == 0:
+                        gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
+                        sky_gaussians_indices = torch.where(gaussians_depth.squeeze() > mean_depth_sky)[0]
+                        model.gaussians.extend_sky_gaussians(sky_gaussians_indices)
+
                 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
                     model.gaussians.reset_opacity()
