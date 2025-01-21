@@ -129,12 +129,12 @@ class GaussianModel:
 
     @property
     def get_metalness(self):
-        return self.metalness_activation(self._metalness)
+        return torch.where(self._is_sky, self._metalness, self.metalness_activation(self._metalness))
 
 
     @property
     def get_roughness(self):
-        return self.roughness_activation(self._roughness + self.roughness_bias)
+        return torch.where(self._is_sky, self._roughness, self.roughness_activation(self._roughness + self.roughness_bias))
 
 
     @property
@@ -149,6 +149,13 @@ class GaussianModel:
     @property
     def get_is_sky(self):
         return self._is_sky
+
+
+    def extend_sky_gaussians(self, indices):
+        self._is_sky[indices] = True
+        self._roughness[indices] = 0
+        self._metalness[indices] = 0
+        self._opacity[indices] = 1
 
 
     def oneupSHdegree(self):
