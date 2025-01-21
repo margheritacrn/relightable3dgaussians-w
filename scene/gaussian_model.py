@@ -99,7 +99,7 @@ class GaussianModel:
 
     @property
     def get_opacity(self):
-        return self.opacity_activation(self._opacity)
+        return torch.where(self._is_sky, self._opacity, self.opacity_activation(self._opacity))
 
 
     def get_covariance(self, scaling_modifier = 1):
@@ -379,7 +379,8 @@ class GaussianModel:
 
     def reset_opacity(self):
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        opacities = torch.where(self._is_sky, self._opacity, opacities_new)
+        opacities_sky = torch.ones_like(opacities_new)
+        opacities = torch.where(self._is_sky, opacities_sky, opacities_new)
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
