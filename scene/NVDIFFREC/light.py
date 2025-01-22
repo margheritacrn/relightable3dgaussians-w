@@ -8,25 +8,28 @@ from utils.general_utils import get_homogeneous
 from utils.sh_utils import  eval_sh
 from utils.sh_additional_utils import sh_render
 from utils.sh_utils import gauss_weierstrass_kernel
-#NOTE: I also need to load envlights that don't need training, so I should have base attribute not directly initialized to LightNet object
-#TODO: add dimensionality control to load_env function
-#TODO: decide wehteher to use equrectangular or cubemap representation/texture for envmaps.
+from typing import Dict, Tuple
 
 
 class EnvironmentLight(torch.nn.Module):
 
-    def __init__(self, base: torch.Tensor, base_is_SH: bool =True, sh_degree : int = 4):
+    def __init__(self, base: torch.Tensor, sh_degree : int = 4):
+        """
+        The class implements a shader based on IBL by following the implementation of NVDIFFREC, https://github.com/NVlabs/nvdiffrecmc.
+
+        Attributes:
+            base (torch.tesnor): Spherical Harmonics (SH) coefficients
+            sh_degree (int): SH degree,
+            sh_dim (int): number of SH coefficients
+        Constants
+            NUM_CHANNELS (int): number of channels of base, which is RGB,
+            C1,C2,...,C5 (int): constants for computing diffuse irradiance
+            M_i,M_j (torch.tensor): indices of the upper triangular part of the matrix involved in diffuse irradiance computation.
+        """
         self.base = base.squeeze()
-        self.base_is_SH = base_is_SH
         self.sh_degree = sh_degree
-        self.sh_dim = (sh_degree +1)**2
-        self.mtx = None  
-        if not self.base_is_SH:
-            # convert base (other option cna be that is a cubemap) to SH (degree 2)
-            # implement the function
-            # update attribute
-            self.base_is_SH = True
-        # define constant attributes for diffuse irradiance computation
+        self.sh_dim = (sh_degree +1)**2 
+        # Define constant attributes for diffuse irradiance computation
         self.NUM_CHANNELS = 3
         self.C1 = 0.429043
         self.C2 = 0.511664
@@ -40,21 +43,38 @@ class EnvironmentLight(torch.nn.Module):
         return EnvironmentLight(self.base.clone().detach())
 
 
-    def get_diffuse_irradiance(self, normal):
+    def get_shdim(self):
+        return self.sh_dim
+
+
+    def get_shdegree(self):
+        return self.sh_degree
+
+
+    def get_base(self):
+        return self.base
+
+
+    def set_base(self, base: torch.Tensor):
+        assert base.squeeze().shape[0] == self.sh_dim, f"The number of SH coefficients must be {self.sh_dim}"
+        self.base = base.squeeze()
+
+
+    def get_diffuse_irradiance(self, normal: torch.tensor)->torch.tensor:
         """
-        The function refers to section 3.2 of "An efficient representaiton for Irradiance Environment Maps"
+        The function computes the diffuse irradiance according to section 3.2 of "An efficient representaiton for Irradiance Environment Maps"
         by Ramamoorthi and Pat Hanrahan, https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf.
-        The function computes diffuse irradiance by convolving environment light and cosine term in frequency domain. In the
-        SH expansion only terms up to degree 2 are considered.
+        The diffuse irradiance is computed by convolving environment light and cosine term in frequency domain. In the
+        SH expansion of the environment light only terms up to degree 2 are considered.
 
         Args:
-            normal(torch.Tensor): tensor of shape N x 3 containing N normal vectors in R³.
+            normal: tensor of shape (N,3) containing normal vectors in R³.
         Returns:
-            diffuse_irradiance (torch.Tensor): tensor of shape N x 1 containing the diffuse irradiance for each normal vector.
+            diffuse_irradiance: tensor of shape (N,1) containing the diffuse irradiance for each normal vector.
         """
-        # move normal to homogeneous coordinates:
+        # Move normal to homogeneous coordinates:
         normal_h = get_homogeneous(normal) # N x 4
-        # build symmetric matrix M
+        # Build symmetric matrix M
         M = torch.zeros((self.NUM_CHANNELS,4,4)).cuda()
         triu_entries = torch.zeros(self.NUM_CHANNELS, 10).cuda()
         for c in range(0, self.NUM_CHANNELS):
@@ -64,7 +84,7 @@ class EnvironmentLight(torch.nn.Module):
                                             self.C3*envc_sh[6], self.C2*envc_sh[2], self.C4*envc_sh[0]-self.C5*envc_sh[6]])
             M[c][self.M_i, self.M_j] = triu_entries[c]
             M[c].T[self.M_i, self.M_j] = triu_entries[c]
-        # get diffuse irradiance
+        # Get diffuse irradiance
         M = M.unsqueeze(0) # 1 x 3 x 4 x 4
         M = M.repeat(normal_h.shape[0], 1, 1, 1) # N x 3 x 4 x 4
         Mn = torch.matmul(M, normal_h.unsqueeze(1).repeat(1,3,1).unsqueeze(-1)) # N x 3 x 4 x 4 * N x 3 x 4 x 1 = N x 3 x 4 x 1
@@ -73,27 +93,26 @@ class EnvironmentLight(torch.nn.Module):
         return diffuse_irradiance
 
 
-    def get_specular_light_sh(self, roughness: torch.Tensor):
+    def get_specular_light_sh(self, roughness: torch.Tensor)->torch.tensor:
         """
         The function computes specular lighting SH coefficients by convolving
         envionment light and a Gaussian blur kernel of std = roughness in frequency domain.
-        The SH coefficients are of degree 4 (= 25  coefficients).
         For what concerns the Gaussian blur filter its representation in frequency domain,
         the Gauss-Weierstrass kernel, is used to derive the corresponding SH coefficients.
 
         Args: 
-            roughness (torch.Tensor): tensor of shape N x 1 containing N roughness values.
+            roughness: tensor of shape N x 1 containing N roughness values.
         Returns:
-            spec_light (torch.Tensor): tensor of shape N x 25 x 3 storing the SH coefficients
+            spec_light: tensor of shape N x self.sh_dim x 3 storing the SH coefficients
                                        of specular light for each roughness value and channel.
         """
-        # build coefficients of blur kernel in frequency (SH) domain
+        # Build coefficients of blur kernel in frequency (SH) domain
         gwk_sh = gauss_weierstrass_kernel(roughness, self.sh_degree) # N x 25
         gwk_sh = gwk_sh.unsqueeze(-1) # N x 25 x 1
-        # adjust dimensions
+        # Adjust dimensions
         envlight_sh = self.base.unsqueeze(0)   # 1 x 25 x 3
         envlight_sh = envlight_sh.repeat(gwk_sh.shape[0], 1, 1) # N x 25 x 3
-        # perform convolution
+        # Perform convolution
         spec_light = gwk_sh * envlight_sh # N x 25 x 3
 
         return spec_light
@@ -101,11 +120,12 @@ class EnvironmentLight(torch.nn.Module):
 
 
     def shade(self, gb_pos:torch.tensor, gb_normal:torch.tensor, albedo:torch.tensor, view_pos:torch.tensor,
-              kr:torch.tensor=None, km:torch.tensor=None, specular:bool=True, tone:bool=True):
+              kr:torch.tensor=None, km:torch.tensor=None, specular:bool=True, tone:bool=True)->Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
-       The function returns the emitted radiance in outgoing direction view_pos. If specular is 
-       True a microfacet Cook-Torrane reflectance model is assumed, otherwise the model is assumed to be Lambertian. 
-       In the specular case the final radiance is the sum of the diffuse and specular radiances.
+       The function, based on NVDIFFREC implementation https://github.com/NVlabs/nvdiffrecmc,
+        returns the emitted radiance in the input outgoing direction. 
+        If specular is True a Microfacets Cook-Torrane reflectance model is assumed, otherwise the model is assumed to be Lambertian. 
+        In the specular case the final radiance is the sum of the diffuse and specular radiances.
         Args:
             gb_pos: world positions HxWxNx3
             gb_normal: normal vectors HxWxNx3
@@ -113,12 +133,11 @@ class EnvironmentLight(torch.nn.Module):
             kr: roughness of points HxWxNx1
             km: metalness of points HxWxNx1
             view_pos: viewing directions HxWxNx3
-            envlight: SH coefficients of environment light 1x#sh_coeffsx3
-        Retursn:
-            rgb (torch.Tensor): shaded rgb color of shape HxWxNx3.
-            extras (dict): dictionary storing diffuse and specular radiance.
+            envlight: SH coefficients of environment light 1xself.sh_dimx3
+        Returns:
+            rgb: shaded rgb color of shape HxWxNx3.
+            extras: dictionary storing diffuse and specular radiance.
         """
-        assert self.base_is_SH, "envlight can be only represented through Spherical Harmonics"
 
         # (H, W, N, 3)
         wo = util.safe_normalize(view_pos - gb_pos)
@@ -173,16 +192,10 @@ class EnvironmentLight(torch.nn.Module):
             rgb = shaded_col.clamp(min=0.0, max=1.0)
 
         return rgb, extras
-    
-
-    def set_base(self, base: torch.Tensor, base_is_SH: bool = True):
-        self.base = base.squeeze()
-        self.base_is_SH = base_is_SH
 
 
-    def render_sh(self, width: int = 600):
-        """Render light SH coefficients in equirectangular format"""
-        assert self.base_is_SH == True, "sh environment light base is required"
+    def render_sh(self, width: int = 600)->np.array:
+        """Render environment light SH coefficients in equirectangular format"""
         self.base = self.base.squeeze()
         rendered_sh = sh_render(self.base, width = width)
         rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
