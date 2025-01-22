@@ -209,10 +209,12 @@ def training(cfg, testing_iterations, saving_iterations):
                     grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optimizer.densify_grad_threshold)
 
                 # Extend sky Gaussians, only if sky depth loss is enabled
-                if cfg.optimizer.lambda_depth_sky > 0 and iteration % cfg.optimizer.extend_sky_gauss_interval == 0:
+                """
+                if cfg.optimizer.lambda_depth_sky > 0 and iteration % cfg.optimizer.update_sky_gauss_interval == 0:
                         gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
                         sky_gaussians_indices = torch.where(gaussians_depth.squeeze() > mean_depth_sky)[0]
-                        model.gaussians.extend_sky_gaussians(sky_gaussians_indices)
+                        model.gaussians.update_sky_gaussians(sky_gaussians_indices)
+                """
 
                 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
