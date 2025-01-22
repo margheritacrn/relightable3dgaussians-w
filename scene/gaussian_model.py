@@ -151,7 +151,7 @@ class GaussianModel:
         return self._is_sky
 
 
-    def extend_sky_gaussians(self, indices):
+    def update_sky_gaussians(self, indices):
         self._is_sky[indices] = True
         self._roughness[indices] = 0
         self._metalness[indices] = 0
@@ -483,7 +483,7 @@ class GaussianModel:
 
 
     def prune_points(self, mask):
-        valid_points_mask = ~mask
+        valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
@@ -562,6 +562,7 @@ class GaussianModel:
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+        selected_pts_mask = torch.where(self.get_is_sky.squeeze(), False, selected_pts_mask)
         if torch.sum(selected_pts_mask) == 0:
             return
 
@@ -596,6 +597,7 @@ class GaussianModel:
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
+        selected_pts_mask = torch.where(self.get_is_sky.squeeze(), False, selected_pts_mask)
         if torch.sum(selected_pts_mask) == 0:
             return
         new_xyz = self._xyz[selected_pts_mask]
