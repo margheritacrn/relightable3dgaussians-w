@@ -55,7 +55,7 @@ def normalize_normal_inplace(normal, alpha):
     normal = torch.where(fg_mask, torch.nn.functional.normalize(normal, p=2, dim=0), normal)
 
 
-def get_shaded_colors_precomp(envlight: EnvironmentLight, gb_pos: torch.tensor, normal: torch.tensor, albedo: torch.tensor, view_pos: torch.tensor,
+def get_shaded_colors(envlight: EnvironmentLight, gb_pos: torch.tensor, normal: torch.tensor, albedo: torch.tensor, view_pos: torch.tensor,
                        roughness:torch.tensor=None, metalness:torch.tensor=None, is_sky:bool=False):
     if is_sky:
         return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
@@ -124,18 +124,20 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
 
     albedo = pc.get_albedo # (N, 3)
     normal = pc.get_normal(dir_pp_normalized=viewing_dirs_normalized) # (N, 3)
-    roughness = pc.get_roughness # (N, 1) 
+    roughness = pc.get_roughness # (N, 1)
     metalness = pc.get_metalness # (N,1)
-
-    color_non_sky_gaussians, brdf_pkg_non_sky_gaussians = get_shaded_colors_precomp(envlight, gb_pos[~sky_gaussians_mask], normal[~sky_gaussians_mask], albedo[~sky_gaussians_mask],
+    colors_precomp, diffuse_color, specular_color = (torch.zeros(pc.get_xyz.shape[0], 3, dtype=torch.float32, device="cuda") for _ in range(3))
+    
+    color_non_sky_gaussians, brdf_pkg_non_sky_gaussians = get_shaded_colors(envlight, gb_pos[~sky_gaussians_mask], normal[~sky_gaussians_mask], albedo[~sky_gaussians_mask],
                                                                                 view_pos[~sky_gaussians_mask], roughness[~sky_gaussians_mask], metalness[~sky_gaussians_mask])
-    color_sky_gaussians, brdf_pkg_sky_gaussians = get_shaded_colors_precomp(envlight, gb_pos[sky_gaussians_mask], normal[sky_gaussians_mask], albedo[sky_gaussians_mask],
+    color_sky_gaussians, brdf_pkg_sky_gaussians = get_shaded_colors(envlight, gb_pos[sky_gaussians_mask], normal[sky_gaussians_mask], albedo[sky_gaussians_mask],
                                                                                 view_pos[sky_gaussians_mask], is_sky=True)
-
-    colors_precomp = torch.cat((color_non_sky_gaussians.squeeze(), color_sky_gaussians.squeeze()), dim=0)
-
-    diffuse_color = torch.cat((brdf_pkg_non_sky_gaussians['diffuse'].squeeze(), brdf_pkg_sky_gaussians['diffuse'].squeeze()), dim=0)
-    specular_color = torch.cat((brdf_pkg_non_sky_gaussians['specular'].squeeze(), brdf_pkg_sky_gaussians['specular'].squeeze()), dim=0)
+    colors_precomp[sky_gaussians_mask] = color_sky_gaussians.squeeze()
+    colors_precomp[~sky_gaussians_mask] = color_non_sky_gaussians.squeeze()
+    diffuse_color[sky_gaussians_mask] = brdf_pkg_sky_gaussians['diffuse'].squeeze()
+    diffuse_color[~sky_gaussians_mask] = brdf_pkg_non_sky_gaussians['diffuse'].squeeze()
+    specular_color[sky_gaussians_mask] = brdf_pkg_sky_gaussians['specular'].squeeze()
+    specular_color[~sky_gaussians_mask] = brdf_pkg_non_sky_gaussians['specular'].squeeze()
 
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
@@ -156,12 +158,13 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
             "visibility_filter" : radii > 0,
             "radii": radii, 
     }
+    render_extras = {"specular_color": specular_color}
 
     # Render depth and normals
     # Get Gaussians depth as z coordinate of their position in camera space
     depth = pc.get_depth(viewpoint_camera)
     depth = depth.repeat(1,3)
-    render_extras = {"depth": depth}
+    render_extras.update({"depth": depth})
 
     normal = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
     # Get normals (already directed towards the camera) in camera coords
@@ -171,9 +174,8 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
 
     if debug:
         render_extras.update({ 
-            "roughness": roughness.repeat(1, 3), 
+            "roughness": roughness.repeat(1, 3),
             "diffuse_color": diffuse_color,
-            "specular_color": specular_color,
             "albedo": albedo})
 
     out_extras = {}
