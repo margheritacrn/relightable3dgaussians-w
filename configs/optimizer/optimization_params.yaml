@@ -24,14 +24,13 @@ roughness_lr: 0.0002
 metalness_lr: 0.0002
 albedo_lr: 0.0002
 reg_normal_from_iter: 15_000 
-normal_reg_until_iter: 0 # 30_000
-lambda_dist: 0 #1, 10
-lambda_normal: 0.05 # 1e-1 #2e-1
+lambda_normal: 0.05
 smooth_depth_from_iter: 15_000
-lambda_depth_sky : 0.5 #0.5 # 0.05
-lambda_depth_smooth: 0.05 # 0.05
+lambda_depth_smooth: 0.05
+lambda_depth_sky : 0.5 # 0.5
 lambda_delta_reg: 1e-3
 lambda_scale: 100.0
+lambda_sky_spec_col: 0
 # l1 loss type
 l1_loss_type: None # "sky_pixels_weight", "sky_fixed_weight"
 # environment light 
