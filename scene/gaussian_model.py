@@ -99,7 +99,7 @@ class GaussianModel:
 
     @property
     def get_opacity(self):
-        return torch.where(self._is_sky, self._opacity, self.opacity_activation(self._opacity))
+        return self.opacity_activation(self._opacity)
 
 
     def get_covariance(self, scaling_modifier = 1):
@@ -238,7 +238,7 @@ class GaussianModel:
         self._roughness = nn.Parameter(torch.cat([self._roughness, sky_roughness], dim=0))
 
 
-        sky_opacity = torch.ones((sky_xyz.shape[0], 1), device=self._opacity.device, requires_grad=True)
+        sky_opacity = inverse_sigmoid(0.95 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda"))
         self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
 
         self._is_sky = torch.cat((self._is_sky, torch.ones((sky_xyz.shape[0], 1), dtype=torch.bool, device=self._is_sky.device)), dim=0)
@@ -385,10 +385,11 @@ class GaussianModel:
 
 
     def reset_opacity(self):
-        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        opacities_sky = torch.ones_like(opacities_new)
-        opacities = torch.where(self._is_sky, opacities_sky, opacities_new)
-        optimizable_tensors = self.replace_tensor_to_optimizer(opacities, "opacity")
+        opacities_non_sky = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        opacities_sky = inverse_sigmoid(torch.max(self.get_opacity, torch.ones_like(self.get_opacity)*0.95))
+        opacities_new = torch.where(self.get_is_sky, opacities_sky, opacities_non_sky)
+        # opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
 
@@ -483,7 +484,8 @@ class GaussianModel:
 
 
     def prune_points(self, mask):
-        valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
+        # valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
+        valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
@@ -562,7 +564,7 @@ class GaussianModel:
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
-        selected_pts_mask = torch.where(self.get_is_sky.squeeze(), False, selected_pts_mask)
+        # selected_pts_mask = torch.where(self.get_is_sky.squeeze(), False, selected_pts_mask)
         if torch.sum(selected_pts_mask) == 0:
             return
 
@@ -597,7 +599,7 @@ class GaussianModel:
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
-        selected_pts_mask = torch.where(self.get_is_sky.squeeze(), False, selected_pts_mask)
+        # selected_pts_mask = torch.where(self.get_is_sky.squeeze(), False, selected_pts_mask)
         if torch.sum(selected_pts_mask) == 0:
             return
         new_xyz = self._xyz[selected_pts_mask]
