@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, envlight_loss, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, depth_loss_gaussians,  envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -164,13 +164,25 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Depth regularization
         if cfg.optimizer.lambda_depth_sky > 0:
-                mean_depth_sky, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
-                loss += cfg.optimizer.lambda_depth_sky*sky_depth_loss_ 
+                sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
+                loss += cfg.optimizer.lambda_depth_sky*sky_depth_loss_
+                """
+                sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
+                gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
+                avg_depth_sky_gauss = torch.mean(gaussians_depth[sky_gaussians_mask])
+                avg_depth_non_sky_gauss = torch.mean(gaussians_depth[~sky_gaussians_mask]) 
+                depth_loss_gauss = depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
+                loss += cfg.optimizer.lambda_depth_sky*depth_loss_gauss
+                """
         if iteration > cfg.optimizer.smooth_depth_from_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
                 depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
                 loss += cfg.optimizer.lambda_depth_smooth*depth_loss
+
+
         loss.backward()
+
+
 
         iter_end.record()
 
@@ -281,7 +293,6 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         model.envlight.set_base(envlight_sh)
                         render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, *renderArgs)
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                        diffuse_col = torch.clamp(render_pkg["diffuse_color"], 0.0, 1.0)
                         resize_image = transforms.ToPILImage()(image)
                         resized_image = resize_transform(resize_image)
                         final_image = transforms.ToTensor()(resized_image).cuda()
@@ -293,7 +304,6 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         gts = torch.cat((gts, final_gt_image.unsqueeze(0)), dim=0)
                         if tb_writer and (idx < 10):
                             tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                            tb_writer.add_images(config['name'] + "_view_{}/diffuse_col".format(viewpoint.image_name), diffuse_col[None], global_step=iteration)
                             if iteration == testing_iterations[0]:
                                 tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
