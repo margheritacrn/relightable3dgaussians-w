@@ -220,7 +220,7 @@ class GaussianModel:
 
         self._xyz = nn.Parameter(torch.cat([self._xyz, sky_xyz], dim=0).requires_grad_(True))
 
-        sky_albedo = 0.5*torch.ones((sky_xyz.shape[0], 3), device=self._albedo.device, requires_grad=True)
+        sky_albedo = torch.ones((sky_xyz.shape[0], 3), device=self._albedo.device, requires_grad=True)
         self._albedo = nn.Parameter(torch.cat([self._albedo, sky_albedo], dim=0))
 
 
@@ -231,7 +231,7 @@ class GaussianModel:
         self._roughness = nn.Parameter(torch.cat([self._roughness, sky_roughness], dim=0))
 
 
-        sky_opacity = inverse_sigmoid(0.95 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda"))
+        sky_opacity =  inverse_sigmoid(0.1 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda")) # inverse_sigmoid(0.95 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda"))
         self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
 
         self._is_sky = torch.cat((self._is_sky, torch.ones((sky_xyz.shape[0], 1), dtype=torch.bool, device=self._is_sky.device)), dim=0)
@@ -378,10 +378,10 @@ class GaussianModel:
 
 
     def reset_opacity(self):
-        opacities_non_sky = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        opacities_sky = inverse_sigmoid(torch.max(self.get_opacity, torch.ones_like(self.get_opacity)*0.95))
-        opacities_new = torch.where(self.get_is_sky, opacities_sky, opacities_non_sky)
-        # opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        # opacities_non_sky = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+        # opacities_sky = inverse_sigmoid(torch.max(self.get_opacity, torch.ones_like(self.get_opacity)*0.95))
+        # opacities_new = torch.where(self.get_is_sky, opacities_sky, opacities_non_sky)
+        opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
 
