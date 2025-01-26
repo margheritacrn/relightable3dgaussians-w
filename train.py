@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, depth_loss_gaussians,  envlight_loss, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, l2_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, depth_loss_gaussians,  envlight_loss, envlight_prior_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -108,37 +108,16 @@ def training(cfg, testing_iterations, saving_iterations):
         # Render
         render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+        specular_color, diffuse_color = render_pkg["specular_color"], render_pkg["diffuse_color"]
 
         # Loss
-        # Photometric loss
         Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
-        if cfg.optimizer.l1_loss_type == "sky_fixed_weight":
-            # Sky loss- weight equally sky and non-sky regions
-            nosky_mask = 1 - sky_mask 
-            num_sky_pixels = torch.sum(nosky_mask == 1)
-            l1_weight = 1 - cfg.optimizer.lambda_dssim
-            if num_sky_pixels > 0:
-                loss = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask).int())*(l1_weight/2) + l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask).int())*(l1_weight/2) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
-            else:
-                loss = Ll1*l1_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask)) 
-        elif cfg.optimizer.l1_loss_type == "sky_pixels_weight":
-            # Sky loss- weighiting by pixels num
-            n_tot_pixels = gt_image.shape[0]*gt_image.shape[1]*gt_image.shape[2]
-            n_no_sky_pixels = torch.sum(sky_mask == 1)
-            nosky_mask = 1 - sky_mask
-            n_sky_pixels = torch.sum(nosky_mask == 1)
-            if n_sky_pixels > 0:
-                # Phtometric loss- no sky and sky
-                l1_no_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_no_sky_pixels/n_tot_pixels)
-                l1_sky_weight = (1.0 - cfg.optimizer.lambda_dssim)*(n_sky_pixels/n_tot_pixels)
-                Ll1_nosky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, sky_mask).int())
-                Ll1_sky = l1_loss(image, gt_image, mask=torch.logical_or(occluders_mask, nosky_mask).int())
-                loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
-            else:
-                loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))    
-        else:
-            # Original loss 
-            loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+        # Reconstruction loss non-sky and sky region
+        Ll1_non_sky = l1_loss(image, gt_image, mask=occluders_mask*sky_mask)
+        loss_non_sky = Ll1_non_sky*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask*sky_mask))
+        Ll1_sky = l1_loss(diffuse_color, gt_image, mask=occluders_mask*(1-sky_mask)) + l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
+        loss_sky = Ll1_sky*(1-cfg.optimizer.lambda_dssim) #+ cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask*(1-sky_mask)))
+        loss = loss_non_sky + loss_sky
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
@@ -151,7 +130,7 @@ def training(cfg, testing_iterations, saving_iterations):
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
             with torch.no_grad():
                 normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
-            envl_loss = envlight_loss(model.envlight, normals)
+            envl_loss = envlight_loss(envlight_sh.squeeze(), model.envlight.sh_degree, normals)
             loss += cfg.optimizer.lambda_envlight*envl_loss
         if cfg.optimizer.lambda_envlight_sh_prior > 0 and iteration <= cfg.optimizer.envlight_prior_until_iter:
             envl_init_loss = envlight_prior_loss(envlight_sh, gt_envlight_sh_prior)
@@ -164,21 +143,27 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Depth regularization
         if cfg.optimizer.lambda_depth_sky > 0:
-                sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
+                """
+                mean_depth_sky, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
                 loss += cfg.optimizer.lambda_depth_sky*sky_depth_loss_
                 """
                 sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
                 gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
-                avg_depth_sky_gauss = torch.mean(gaussians_depth[sky_gaussians_mask])
-                avg_depth_non_sky_gauss = torch.mean(gaussians_depth[~sky_gaussians_mask]) 
+                avg_depth_sky_gauss = torch.mean(gaussians_depth[(sky_gaussians_mask) & (visibility_filter)])
+                avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
                 depth_loss_gauss = depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
-                loss += cfg.optimizer.lambda_depth_sky*depth_loss_gauss
-                """
+                loss += 0.5*depth_loss_gauss
+
         if iteration > cfg.optimizer.smooth_depth_from_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
-                depth_loss = predicted_depth_loss(render_pkg["depth"]*occluders_mask)
-                loss += cfg.optimizer.lambda_depth_smooth*depth_loss
+                depth_loss_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=sky_mask)
+                depth_loss_non_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=(1-sky_mask))
+                loss += cfg.optimizer.lambda_depth_smooth*(depth_loss_sky + depth_loss_non_sky)
 
+        # Sky specular color regularization
+        if cfg.optimizer.lambda_sky_spec_col > 0:
+            sky_spec_col = render_pkg["specular_color"]*(1-sky_mask.expand_as(render_pkg["specular_color"]))
+            loss+= cfg.optimizer.lambda_sky_spec_col*l1_loss(sky_spec_col, torch.zeros_like(sky_spec_col))
 
         loss.backward()
 
@@ -214,19 +199,22 @@ def training(cfg, testing_iterations, saving_iterations):
 
                 if iteration == cfg.optimizer.densify_from_iter:
                     grad_threshold = cfg.optimizer.densify_grad_threshold
+                """
+                # Extend sky Gaussians, only if sky depth loss is enabled
+                if cfg.optimizer.lambda_depth_sky > 0 and iteration > cfg.optimizer.densify_from_iter and iteration % cfg.optimizer.update_sky_gauss_interval == 0:
+                        gaussians_depth = model.gaussians.get_depth(viewpoint_cam).squeeze()
+                        sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
+                        non_sky_gaussians_depth = gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]
+                        new_sky_gaussians_indices = torch.where(non_sky_gaussians_depth > mean_depth_sky)[0]
+                        model.gaussians.add_sky_gaussians(new_sky_gaussians_indices)
+                        # prune useless sky gaussians
+                        model.gaussians.prune_sky_gaussians((sky_gaussians_mask) & (visibility_filter) & (gaussians_depth < mean_depth_sky))
+                """
 
                 if iteration > cfg.optimizer.densify_from_iter and iteration % cfg.optimizer.densification_interval == 0:
                     size_threshold = 20 if iteration > cfg.optimizer.opacity_reset_interval else None
                     model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
                     grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optimizer.densify_grad_threshold)
-
-                # Extend sky Gaussians, only if sky depth loss is enabled
-                """
-                if cfg.optimizer.lambda_depth_sky > 0 and iteration % cfg.optimizer.update_sky_gauss_interval == 0:
-                        gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
-                        sky_gaussians_indices = torch.where(gaussians_depth.squeeze() > mean_depth_sky)[0]
-                        model.gaussians.update_sky_gaussians(sky_gaussians_indices)
-                """
 
                 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
@@ -376,7 +364,7 @@ if __name__ == "__main__":
 
     # Start GUI server, configure and run training
     # network_gui.init(args.ip, args.port)
-    torch.autograd.set_detect_anomaly(args.detect_anomaly)
+    torch.autograd.set_detect_anomaly(False)#(args.detect_anomaly)
 
     sys.argv = [sys.argv[0]] + cl_args
     main()
