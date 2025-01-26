@@ -184,7 +184,7 @@ def delta_normal_loss(delta_normal_norm, alpha=None):
     return loss
 
 
-def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N_dirs: int = 1000, normals_subset_size = 100):
+def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tensor, N_dirs: int = 1000, normals_subset_size = 100):
     """
     Regularization on environment lighting coefficients: incoming light should belong to R+.
     The loss is computed on a random subset of the input normals. For each normal N random directions
@@ -205,7 +205,7 @@ def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N_dirs: int
     # generate N_dirs random viewing directions in the hemisphere centered in n for each n in normals
     rand_hemisphere_dirs = rand_hemisphere_dir(N_dirs, normals) # (..., N, 3)
     # evaluate SH coefficients of env light
-    light = eval_sh(envlight.sh_degree, envlight.base.transpose(0,1), rand_hemisphere_dirs)
+    light = eval_sh(sh_degree, envlight_sh.transpose(0,1), rand_hemisphere_dirs)
     # extract negative values
     light = torch.minimum(light, torch.zeros_like(light))
     # average negative light values over number of viewing direction samples
@@ -214,7 +214,14 @@ def envlight_loss(envlight: EnvironmentLight, normals: torch.Tensor, N_dirs: int
     avg_light = torch.mean(avg_light_per_normal, dim = 0)
     # take squared 2 norm
     envlight_loss = torch.mean((avg_light)**2)
-    return envlight_loss
+    if sh_degree > 2:
+        diffuse_light = eval_sh(2, envlight_sh[:9, :].transpose(0,1), rand_hemisphere_dirs)
+        avg_diff_light_per_normal = torch.mean(diffuse_light, dim = 1)
+        avg_diff_light = torch.mean(avg_diff_light_per_normal, dim = 0)
+        envlight_diffuse_loss = torch.mean((avg_diff_light)**2)
+        return envlight_loss + envlight_diffuse_loss
+    else:
+        return envlight_loss
 
 
 def envlight_loss_without_normals(envlight: EnvironmentLight, N_samples: int=10):
