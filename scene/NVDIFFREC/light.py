@@ -137,10 +137,7 @@ class EnvironmentLight(torch.nn.Module):
         Returns:
             rgb: shaded rgb color of shape HxWxNx3.
             extras: dictionary storing diffuse and specular radiance.
-        """
-
-        # (H, W, N, 3)
-        wo = util.safe_normalize(view_pos - gb_pos)
+        """        
 
         diff_col = albedo
         if specular:
@@ -148,15 +145,17 @@ class EnvironmentLight(torch.nn.Module):
             roughness = kr # (H,W,N,1)
             diff_col = (1-metalness)*albedo
 
-        reflvec = util.safe_normalize(util.reflect(wo, gb_normal))
         nrmvec = gb_normal
 
         diffuse_irradiance = self.get_diffuse_irradiance(nrmvec.squeeze())
         diffuse_irradiance = torch.nn.functional.relu(diffuse_irradiance)
-        shaded_col = diff_col*diffuse_irradiance
-        extras = {"diffuse": util.gamma_correction(shaded_col)}
+        diffuse_radiance = diff_col*diffuse_irradiance
+        shaded_col = diffuse_radiance
+        extras = {"diffuse": util.gamma_correction(diffuse_radiance)}
 
         if specular:
+            wo = util.safe_normalize(view_pos - gb_pos) # (H, W, N, 3)
+            reflvec = util.safe_normalize(util.reflect(wo, gb_normal))
             # Lookup FG term from lookup texture
             NdotV = torch.clamp(util.dot(wo, nrmvec), min=1e-4)
             fg_uv = torch.cat((NdotV, roughness), dim=-1)
@@ -180,7 +179,7 @@ class EnvironmentLight(torch.nn.Module):
                 F0 = (1.0 - metalness) * 0.04 + albedo * metalness
             reflectance = F0* fg_lookup[...,0:1] + fg_lookup[...,1:2]
             specular_radiance = spec_irradiance*reflectance
-            shaded_col += specular_radiance
+            shaded_col = shaded_col + specular_radiance
             extras['specular'] = util.gamma_correction(specular_radiance)
         else:
             extras['specular'] = torch.zeros_like(extras["diffuse"])
