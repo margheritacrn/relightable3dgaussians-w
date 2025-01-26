@@ -126,7 +126,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     normal = pc.get_normal(dir_pp_normalized=viewing_dirs_normalized) # (N, 3)
     roughness = pc.get_roughness # (N, 1)
     metalness = pc.get_metalness # (N,1)
-    colors_precomp, diffuse_color, specular_color = (torch.zeros(pc.get_xyz.shape[0], 3, dtype=torch.float32, device="cuda") for _ in range(3))
+    colors_precomp, diffuse_color, specular_color = (torch.zeros(gb_pos.shape[0], 3, dtype=torch.float32, device="cuda") for _ in range(3))
     
     color_non_sky_gaussians, brdf_pkg_non_sky_gaussians = get_shaded_colors(envlight, gb_pos[~sky_gaussians_mask], normal[~sky_gaussians_mask], albedo[~sky_gaussians_mask],
                                                                                 view_pos[~sky_gaussians_mask], roughness[~sky_gaussians_mask], metalness[~sky_gaussians_mask])
@@ -158,7 +158,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
             "visibility_filter" : radii > 0,
             "radii": radii, 
     }
-    render_extras = {"specular_color": specular_color}
+    render_extras = {"specular_color": specular_color, "diffuse_color": diffuse_color}
 
     # Render depth and normals
     # Get Gaussians depth as z coordinate of their position in camera space
@@ -175,7 +175,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     if debug:
         render_extras.update({ 
             "roughness": roughness.repeat(1, 3),
-            "diffuse_color": diffuse_color,
             "albedo": albedo})
 
     out_extras = {}
