@@ -151,13 +151,6 @@ class GaussianModel:
         return self._is_sky
 
 
-    def update_sky_gaussians(self, indices):
-        self._is_sky[indices] = True
-        self._roughness[indices] = 0
-        self._metalness[indices] = 0
-        self._opacity[indices] = 1
-
-
     def oneupSHdegree(self):
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
@@ -484,8 +477,8 @@ class GaussianModel:
 
 
     def prune_points(self, mask):
-        # valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
-        valid_points_mask = ~mask
+        valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
+        # valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
