@@ -214,6 +214,7 @@ def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tens
     avg_light = torch.mean(avg_light_per_normal, dim = 0)
     # take squared 2 norm
     envlight_loss = torch.mean((avg_light)**2)
+    """
     if sh_degree > 2:
         diffuse_light = eval_sh(2, envlight_sh[:9, :].transpose(0,1), rand_hemisphere_dirs)
         avg_diff_light_per_normal = torch.mean(diffuse_light, dim = 1)
@@ -221,7 +222,8 @@ def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tens
         envlight_diffuse_loss = torch.mean((avg_diff_light)**2)
         return envlight_loss + envlight_diffuse_loss
     else:
-        return envlight_loss
+    """
+    return envlight_loss
 
 
 def envlight_loss_without_normals(envlight: EnvironmentLight, N_samples: int=10):
