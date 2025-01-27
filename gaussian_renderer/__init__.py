@@ -127,17 +127,23 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     roughness = pc.get_roughness # (N, 1)
     metalness = pc.get_metalness # (N,1)
     colors_precomp, diffuse_color, specular_color = (torch.zeros(gb_pos.shape[0], 3, dtype=torch.float32, device="cuda") for _ in range(3))
-    
-    color_non_sky_gaussians, brdf_pkg_non_sky_gaussians = get_shaded_colors(envlight, gb_pos[~sky_gaussians_mask], normal[~sky_gaussians_mask], albedo[~sky_gaussians_mask],
-                                                                                view_pos[~sky_gaussians_mask], roughness[~sky_gaussians_mask], metalness[~sky_gaussians_mask])
-    color_sky_gaussians, brdf_pkg_sky_gaussians = get_shaded_colors(envlight, gb_pos[sky_gaussians_mask], normal[sky_gaussians_mask], albedo[sky_gaussians_mask],
-                                                                                view_pos[sky_gaussians_mask], is_sky=True)
-    colors_precomp[sky_gaussians_mask] = color_sky_gaussians.squeeze()
-    colors_precomp[~sky_gaussians_mask] = color_non_sky_gaussians.squeeze()
-    diffuse_color[sky_gaussians_mask] = brdf_pkg_sky_gaussians['diffuse'].squeeze()
-    diffuse_color[~sky_gaussians_mask] = brdf_pkg_non_sky_gaussians['diffuse'].squeeze()
-    specular_color[sky_gaussians_mask] = brdf_pkg_sky_gaussians['specular'].squeeze()
-    specular_color[~sky_gaussians_mask] = brdf_pkg_non_sky_gaussians['specular'].squeeze()
+
+    if torch.sum(sky_gaussians_mask) > 0:
+        color_non_sky_gaussians, brdf_pkg_non_sky_gaussians = get_shaded_colors(envlight, gb_pos[~sky_gaussians_mask], normal[~sky_gaussians_mask], albedo[~sky_gaussians_mask],
+                                                                                    view_pos[~sky_gaussians_mask], roughness[~sky_gaussians_mask], metalness[~sky_gaussians_mask])
+        color_sky_gaussians, brdf_pkg_sky_gaussians = get_shaded_colors(envlight, gb_pos[sky_gaussians_mask], normal[sky_gaussians_mask], albedo[sky_gaussians_mask],
+                                                                                    view_pos[sky_gaussians_mask], is_sky=True)
+        colors_precomp[sky_gaussians_mask] = color_sky_gaussians.squeeze()
+        colors_precomp[~sky_gaussians_mask] = color_non_sky_gaussians.squeeze()
+        diffuse_color[sky_gaussians_mask] = brdf_pkg_sky_gaussians['diffuse'].squeeze()
+        diffuse_color[~sky_gaussians_mask] = brdf_pkg_non_sky_gaussians['diffuse'].squeeze()
+        specular_color[sky_gaussians_mask] = brdf_pkg_sky_gaussians['specular'].squeeze()
+        specular_color[~sky_gaussians_mask] = brdf_pkg_non_sky_gaussians['specular'].squeeze()
+    else:
+        colors_precomp, brdf_pkg = get_shaded_colors(envlight, gb_pos, normal, albedo, view_pos, roughness, metalness)
+        colors_precomp = colors_precomp.squeeze()
+        diffuse_color = brdf_pkg['diffuse'].squeeze()
+        specular_color = brdf_pkg['specular'].squeeze()
 
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
