@@ -268,34 +268,6 @@ class Relightable3DGW:
                     loss = mse_loss(image_half, gt_image_half, reduction=None)
                     loss = torch.where(occluders_mask, loss, torch.nan)
                     loss = loss.nanmean()
-                elif self.config.optimizer.l1_loss_type == "sky_fixed_weight":
-                    nosky_mask_half = 1 - sky_mask_half
-                    num_sky_pixels = torch.sum(nosky_mask_half == 1)
-                    l1_weight = 1 - ssim_weight
-                    if num_sky_pixels > 0:
-                        loss = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, nosky_mask_half).int())*(l1_weight/2) + \
-                               l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, sky_mask_half).int())*(l1_weight/2) + \
-                               ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
-                    else:
-                        loss = l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*l1_weight + \
-                               ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half)) 
-                elif self.config.optimizer.l1_loss_type == "sky_pixels_weight":
-                    # Sky loss- weighiting by pixels num
-                    n_tot_pixels = gt_image_half.shape[0]*gt_image_half.shape[1]*gt_image_half.shape[2]
-                    n_no_sky_pixels = torch.sum(sky_mask_half == 1)
-                    nosky_mask_half = 1 - sky_mask_half
-                    n_sky_pixels = torch.sum(nosky_mask_half == 1)
-                    if n_sky_pixels > 0:
-                        # Phtometric loss- no sky and sky
-                        l1_no_sky_weight = (1.0 - ssim_weight)*(n_no_sky_pixels/n_tot_pixels)
-                        l1_sky_weight = (1.0 - ssim_weight)*(n_sky_pixels/n_tot_pixels)
-                        Ll1_nosky = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, sky_mask_half).int())
-                        Ll1_sky = l1_loss(image_half, gt_image_half, mask=torch.logical_or(occluders_mask_half, nosky_mask_half).int())
-                        loss =  Ll1_nosky*l1_no_sky_weight + Ll1_sky*l1_sky_weight + \
-                                ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
-                    else:
-                        loss = l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
-                               ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))  
                 else:
                     loss =  l1_loss(image_half, gt_image_half, mask=occluders_mask_half)*(1 - ssim_weight) + \
                             ssim_weight *(1.0 - ssim(image_half, gt_image_half, mask=occluders_mask_half))
