@@ -22,6 +22,7 @@ from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci
 from utils.graphics_utils import getWorld2View2
 import open3d as o3d
+import math
 
 
 class GaussianModel:
@@ -190,15 +191,15 @@ class GaussianModel:
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
-
-
+    
+    
     @torch.no_grad()
     def get_sky_xyz(self, num_points: int, cameras):
         """Adapted from https://arxiv.org/abs/2407.08447"""
         points = get_uniform_points_on_sphere_fibonacci(num_points)
         points = points.to("cuda")
         mean = self._xyz.mean(0)[None]
-        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97) * 10
+        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97) #* 10
         points = points * sky_distance
         points = points + mean
         gmask = torch.zeros((points.shape[0],), dtype=torch.bool, device=points.device)
@@ -477,8 +478,8 @@ class GaussianModel:
 
 
     def prune_points(self, mask):
-        valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
-        # valid_points_mask = ~mask
+        # valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
+        valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
@@ -607,7 +608,7 @@ class GaussianModel:
 
         with torch.no_grad():
             normals = self.get_normal(dir_pp_normalized=viewing_dir, normalize=True)
-        new_xyz += grads[selected_pts_mask]*normals[selected_pts_mask]
+        new_xyz = new_xyz + grads[selected_pts_mask]*normals[selected_pts_mask]
 
 
         self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, 
