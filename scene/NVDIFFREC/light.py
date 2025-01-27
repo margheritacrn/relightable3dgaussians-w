@@ -59,8 +59,37 @@ class EnvironmentLight(torch.nn.Module):
         assert base.squeeze().shape[0] == self.sh_dim, f"The number of SH coefficients must be {self.sh_dim}"
         self.base = base.squeeze()
 
+    def get_diffuse_irradiance(self, normal: torch.tensor)-> torch.tensor:
+        """
+        The function computes the diffuse irradiance according to section 3.2 of "An efficient representaiton for Irradiance Environment Maps"
+        by Ramamoorthi and Pat Hanrahan, https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf.
+        The diffuse irradiance is computed by convolving environment light and cosine term in frequency domain. In the
+        SH expansion of the environment light only terms up to degree 2 are considered.
 
-    def get_diffuse_irradiance(self, normal: torch.tensor)->torch.tensor:
+        Args:
+            normal: tensor of shape (N,3) containing normal vectors in R³.
+        Returns:
+            diffuse_irradiance: tensor of shape (N,1) containing the diffuse irradiance for each normal vector.
+        """
+
+        x, y, z = normal[..., 0, None], normal[..., 1, None], normal[..., 2, None]
+
+        diffuse_irradiance = (
+            self.C1 * self.base[8,:] * (x ** 2 - y ** 2) +
+            self.C3 * self.base[6,:] * (z ** 2) +
+            self.C4 * self.base[0,:] -
+            self.C5 * self.base[6,:] +
+            2 * self.C1 * self.base[4,:] * x * y +
+            2 * self.C1 * self.base[7,:] * x * z +
+            2 * self.C1 * self.base[5,:] * y * z +
+            2 * self.C2 * self.base[3,:] * x +
+            2 * self.C2 * self.base[1,:] * y +
+            2 * self.C2 * self.base[2,:] * z
+        )
+        return diffuse_irradiance
+
+
+    def get_diffuse_irradiance_old(self, normal: torch.tensor)->torch.tensor:
         """
         The function computes the diffuse irradiance according to section 3.2 of "An efficient representaiton for Irradiance Environment Maps"
         by Ramamoorthi and Pat Hanrahan, https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf.
