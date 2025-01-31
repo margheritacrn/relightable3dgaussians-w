@@ -156,9 +156,8 @@ def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
         normal = normal*sky_mask
     n = normal_ref.permute(1,2,0).reshape(-1,3).detach()
     n_pred = normal.permute(1,2,0).reshape(-1,3)
-    # n_pred = F.normalize(n_pred, dim=-1)
-    # l1_loss =(torch.abs(normal_ref - normal).sum(dim=-1)).mean()
-    loss = ((1.0 - torch.sum(n * n_pred, axis=-1))).mean() # compute cos between n and n_pred, for them to be perfectly aligned it has to be 1
+    # Compute cos between n and n_pred, for them to be perfectly aligned it has to be 1
+    loss = ((1.0 - torch.sum(n * n_pred, axis=-1))).mean()
 
     return loss
 
