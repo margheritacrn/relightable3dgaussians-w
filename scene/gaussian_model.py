@@ -199,7 +199,7 @@ class GaussianModel:
         points = get_uniform_points_on_sphere_fibonacci(num_points)
         points = points.to("cuda")
         mean = self._xyz.mean(0)[None]
-        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97) #* 10
+        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97)*2
         points = points * sky_distance
         points = points + mean
         gmask = torch.zeros((points.shape[0],), dtype=torch.bool, device=points.device)
@@ -379,9 +379,6 @@ class GaussianModel:
 
 
     def reset_opacity(self):
-        # opacities_non_sky = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-        # opacities_sky = inverse_sigmoid(torch.max(self.get_opacity, torch.ones_like(self.get_opacity)*0.95))
-        # opacities_new = torch.where(self.get_is_sky, opacities_sky, opacities_non_sky)
         opacities_new = inverse_sigmoid(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
         optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
         self._opacity = optimizable_tensors["opacity"]
@@ -478,8 +475,8 @@ class GaussianModel:
 
 
     def prune_points(self, mask):
-        # valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
-        valid_points_mask = ~mask
+        valid_points_mask = torch.where(self.get_is_sky.squeeze(), True, ~mask)
+        # valid_points_mask = ~mask
         optimizable_tensors = self._prune_optimizer(valid_points_mask)
 
         self._xyz = optimizable_tensors["xyz"]
