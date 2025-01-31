@@ -30,12 +30,6 @@ from torch.utils.data import TensorDataset, DataLoader
 from omegaconf import DictConfig
 from render import render_sets_training
 import hydra
-#TODO: add training for envlight--> pretraining of AE and then train along with the Gaussians the MLP returning SH coefficients
-#NOTE: I deactivated temporarily network gui (reactivate later for training with debug)
-#TODO: add regularization term for environment light SH coefficients: they must be positive
-#TODO: None lighting conditions
-#TODO: edit dataset.sh_degree, I should use it for envlight_sh_mlp with assertion of it being >=4
-#TODO: consider wehther to create a model class. because for ex init envlight sh doesn't make a lot of sense inside
 
 
 try:
@@ -89,15 +83,15 @@ def training(cfg, testing_iterations, saving_iterations):
         specular_color, diffuse_color = render_pkg["specular_color"], render_pkg["diffuse_color"]
 
         # Loss
+        Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
         if cfg.envlight_sh_degree == 2:
             Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
             loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
         else:
         # Reconstruction loss for non-sky and sky region
-            Ll1_non_sky = l1_loss(image, gt_image, mask=occluders_mask*sky_mask)
-            loss_non_sky = Ll1_non_sky*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask*sky_mask))
-            loss_sky = l1_loss(diffuse_color, gt_image, mask=occluders_mask*(1-sky_mask)) + l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
-            loss = loss_non_sky + loss_sky
+            loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+            loss_sky = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
+            loss += loss_sky
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
@@ -119,18 +113,18 @@ def training(cfg, testing_iterations, saving_iterations):
             loss += cfg.optimizer.lambda_scale*scale_loss
 
         # Depth regularization
-        if cfg.optimizer.lambda_depth_sky > 0:
+        if cfg.optimizer.lambda_sky_gauss > 0:
                 if cfg.num_sky_points > 0:
                     sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
                     gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
                     sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
                     avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
                     avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
-                    depth_loss_gauss = depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
-                    loss += cfg.optimizer.lambda_depth_sky*depth_loss_gauss
+                    depth_loss_sky_gauss = depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
+                    loss += cfg.optimizer.lambda_sky_gauss*depth_loss_sky_gauss
                 else:
                     _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=sky_mask)
-                    loss += cfg.optimizer.lambda_depth_smooth*sky_depth_loss_
+                    loss += cfg.optimizer.lambda_sky_gauss*sky_depth_loss_
 
         if iteration > cfg.optimizer.smooth_depth_from_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
@@ -203,6 +197,8 @@ def prepare_output_and_logger(args):
 
     # Create Tensorboard writer
     tb_writer = None
+    if not args.logger:
+        return tb_writer
     if TENSORBOARD_FOUND:
         tb_writer = SummaryWriter(args.model_path)
     else:
