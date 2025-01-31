@@ -55,7 +55,7 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
         bg_color = [1,1,1] if cfg.dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         test_cameras = model.scene.getTestCameras()
-        test_envmaps_path = os.path.join(cfg.dataset.source_path, "final/test/ENVMAP_CC") 
+        test_envmaps_path = os.path.join(cfg.dataset.source_path, "test/ENV_MAP_CC") 
         # Environment maps processing
         scale = 10
         threshold = 0.999
@@ -79,6 +79,8 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
             
             # Get processed envmap
             envmap_path = os.path.join(test_envmaps_path, lighting_condition)
+            if len(glob.glob(os.path.join(envmap_path, "*.jpg"))) == 0:
+                continue
             envmap_img_path = glob.glob(os.path.join(envmap_path, "*.jpg"))[0]
             gt_envmap_sh = process_environment_map_image(envmap_img_path, scale, threshold) # (25,3)
             # Get gt image
@@ -291,6 +293,7 @@ def main(cfg: DictConfig):
     print("Rendering with GT illumination" + cfg.dataset.model_path)
     cfg.dataset.eval = True
     render_and_evaluate_test_scenes(cfg, cfg.eval_all)
+
     print("\nEnd")
 
 
