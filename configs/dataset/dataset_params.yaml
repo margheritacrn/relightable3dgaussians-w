@@ -6,3 +6,4 @@ resolution: -1
 white_background: False
 data_device: "cuda"
 eval: False
+logger: True

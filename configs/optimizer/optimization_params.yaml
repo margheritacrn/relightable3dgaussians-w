@@ -14,7 +14,6 @@ percent_dense: 0.01
 lambda_dssim: 0.2
 densification_interval: 500
 opacity_reset_interval: 3000
-update_sky_gauss_interval: 4001
 densify_from_iter: 500
 densify_until_iter: 15_000
 densify_grad_threshold: 0.0001 # 0.0002
@@ -25,17 +24,16 @@ metalness_lr: 0.0002
 albedo_lr: 0.0002
 reg_normal_from_iter: 15_000 
 lambda_normal: 0.05
-lambda_sky_gauss: 1
-smooth_depth_from_iter: 15000 #15_000
-lambda_depth_smooth: 0.05
-lambda_depth_sky : 0.5 # 0.5
+smooth_depth_from_iter: 15_000 #15000 #15_000
+lambda_depth_smooth: 0
+lambda_sky_gauss : 0.05
 lambda_delta_reg: 1e-3
 lambda_scale: 100.0
 lambda_sky_spec_col: 0
 # environment light 
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
-lambda_envlight: 100 #0.05
+lambda_envlight: 100
 lambda_envlight_sh_prior: 0
 envlight_prior_until_iter: 0
 envlight_loss_until_iter: 50_000
