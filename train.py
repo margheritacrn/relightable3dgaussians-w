@@ -84,18 +84,15 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Loss
         Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
-        if cfg.envlight_sh_degree == 2:
-            Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
-            loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
-        else:
-        # Reconstruction loss for non-sky and sky region
-            loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
-            loss_sky = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
-            loss += loss_sky
+        loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+        if cfg.envlight_sh_degree > 2:
+            # Sky specular color regularization
+            loss_sky_specular = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
+            loss += loss_sky_specular
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"])
+            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"]*occluders_mask)
             loss += cfg.optimizer.lambda_normal*normal_loss
 
         # Envlight regularization
