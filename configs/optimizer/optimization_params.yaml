@@ -34,7 +34,7 @@ lambda_sky_spec_col: 0
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
 lambda_envlight: 100
-lambda_envlight_sh_prior: 0
+lambda_envlight_sh_prior: 0 #0.05
 envlight_prior_until_iter: 0
 envlight_loss_until_iter: 50_000
 # per-image embeddings
