@@ -260,6 +260,7 @@ def get_half_images(img: torch.tensor, left: bool = True):
         right_half_images = img[..., :, img.shape[2] // 2:]
         return right_half_images
 
+
 def insert_zeros(batch: torch.tensor, zeros_idxs: torch.tensor):
     """The function increases the dimension of the tensors contained in the input batch
     from n to n+1 by inserting a 0 in a specified position.
@@ -278,3 +279,8 @@ def insert_zeros(batch: torch.tensor, zeros_idxs: torch.tensor):
     shifted_idxs = tensors_idxs + shift_idxs_mask.int()
     batch_out[torch.arange(batch_size).unsqueeze(1).expand(batch_size, tensors_dim).reshape(-1), shifted_idxs.flatten()] = batch.flatten()
     return batch_out
+
+
+def pinverse(A: torch.tensor):
+    # The function computes the pseudo-inverse of the input matrix A.
+    return torch.linalg.pinv(A, rtol=1e-6)
