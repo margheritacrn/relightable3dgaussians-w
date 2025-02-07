@@ -229,7 +229,7 @@ def get_uniform_points_on_sphere_fibonacci(num_points, *, dtype=None, xnp=torch)
 
     # Spherical to cartesian
     x = xnp.cos(lon) * xnp.cos(lat)
-    y = xnp.sin(lon) * xnp.cos(lat)
+    y = -xnp.abs(xnp.sin(lon) * xnp.cos(lat))
     z = xnp.sin(lat)
     return xnp.stack([x, y, z], -1)
 
