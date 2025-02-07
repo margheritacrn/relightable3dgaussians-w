@@ -129,7 +129,7 @@ class Relightable3DGW:
 
     def training_set_up(self):
         training_args = self.config.optimizer
-        gaussians_opt_params = self.gaussians.training_setup_relit3DGW(training_args)
+        gaussians_opt_params = self.gaussians.training_setup(training_args)
 
         model_opt_params =  [
             {'params': self.envlight_sh_mlp.parameters(), 'lr': training_args.envlight_sh_lr,
