@@ -216,7 +216,7 @@ def rand_hemisphere_dir(N: torch.Tensor, n: torch.Tensor):
     return d
 
 
-def get_uniform_points_on_upper_hemisphere_fibonacci(num_points, *, dtype=None, xnp=torch):
+def get_uniform_points_on_sphere_fibonacci(num_points, *, dtype=None, xnp=torch):
     # https://arxiv.org/pdf/0912.4540.pdf
     # Golden angle in radians
     if dtype is None:
@@ -229,7 +229,7 @@ def get_uniform_points_on_upper_hemisphere_fibonacci(num_points, *, dtype=None, 
 
     # Spherical to cartesian
     x = xnp.cos(lon) * xnp.cos(lat)
-    y = -xnp.abs(xnp.sin(lon) * xnp.cos(lat))
+    y = xnp.sin(lon) * xnp.cos(lat)
     z = xnp.sin(lat)
     return xnp.stack([x, y, z], -1)
 

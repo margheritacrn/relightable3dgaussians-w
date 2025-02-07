@@ -19,7 +19,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_upper_hemisphere_fibonacci
+from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci
 from utils.graphics_utils import getWorld2View2
 import open3d as o3d
 import math
@@ -196,8 +196,11 @@ class GaussianModel:
     @torch.no_grad()
     def get_sky_xyz(self, num_points: int, cameras):
         """Adapted from https://arxiv.org/abs/2407.08447"""
-        points = get_uniform_points_on_upper_hemisphere_fibonacci(num_points)
+        points = get_uniform_points_on_sphere_fibonacci(num_points)
         points = points.to("cuda")
+        points[:,1] = -torch.abs(points[:,1])
+        points[:,2] = torch.abs(points[:,2])
+        points = torch.unique(points, dim=0)
         mean = self._xyz.mean(0)[None]
         sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97)*2
         points = points * sky_distance
