@@ -464,12 +464,12 @@ class GaussianModel:
     
         is_sky = np.asarray(plydata.elements[0]["is_sky"])[..., np.newaxis]
         sky_angles_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("sky_angles_")]
-        sky_radius = self._sky_radius.repeat(xyz.shape[0],1).cpu().numpy()
+        sky_radius = np.asarray(plydata.elements[0]["sky_radius"])[0]
         sky_angles = np.zeros((xyz.shape[0], len(sky_angles_names)))
-        for idx, attr_name in enumerate(scale_names):
+        for idx, attr_name in enumerate(sky_angles_names):
             sky_angles[:, idx] = np.asarray(plydata.elements[0][attr_name])
 
-        xyz = xyz[is_sky.squeeze()]
+        xyz = xyz[is_sky.squeeze() == 0]
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._albedo = nn.Parameter(torch.tensor(albedo, dtype=torch.float, device="cuda").requires_grad_(True))
