@@ -12,7 +12,7 @@
 from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
-from utils.graphics_utils import fov2focal
+from utils.graphics_utils import fov2focal, getWorld2View2
 import torch 
 
 WARNED = False
@@ -92,3 +92,14 @@ def camera_to_JSON(id, camera : Camera):
         'fx' : fov2focal(camera.FovX, camera.width)
     }
     return camera_entry
+
+
+def get_scene_center(cams_info):
+        cam_centers = []
+        for cam in cams_info:
+            W2C = getWorld2View2(cam.R, cam.T)
+            C2W = np.linalg.inv(W2C)
+            cam_centers.append(C2W[:3, 3:4])
+        cam_centers = np.hstack(cam_centers)
+        avg_cam_center = np.mean(cam_centers, axis=1, keepdims=True)
+        return avg_cam_center
