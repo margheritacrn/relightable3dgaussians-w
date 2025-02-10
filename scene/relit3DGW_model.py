@@ -69,7 +69,8 @@ class Relightable3DGW:
                                             sh_degree=self.config.envlight_sh_degree)
         self.embeddings_test = None
 
-        self.save_config()
+        if not self.config.dataset.eval:
+            self.save_config()
 
 
     def initialize_embeddings(self, test = False):
