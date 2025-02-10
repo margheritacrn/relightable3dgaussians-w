@@ -80,7 +80,7 @@ def training(cfg, testing_iterations, saving_iterations):
         # Render
         render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        specular_color, diffuse_color = render_pkg["specular_color"], render_pkg["diffuse_color"]
+        specular_color = render_pkg["specular_color"]
 
         # Loss
         Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
@@ -88,7 +88,7 @@ def training(cfg, testing_iterations, saving_iterations):
         if cfg.envlight_sh_degree > 2:
             # Sky specular color regularization
             loss_sky_specular = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
-            loss += loss_sky_specular
+            loss += cfg.optimizer.lambda_sky_spec_col*loss_sky_specular
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
@@ -170,9 +170,8 @@ def training(cfg, testing_iterations, saving_iterations):
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
                     model.gaussians.reset_opacity()
 
-            # Optimizer step: for both gaussians parameters and envlight MLP (per-image)
+            # Optimizer step
             if iteration < cfg.optimizer.iterations:
-                # torch.nn.utils.clip_grad_norm_(model.optimizer.param_groups[0]['params'], 1.0)
                 model.optimizer.step()
                 model.optimizer.zero_grad(set_to_none = True)
                 model.update_learning_rate(iteration)
@@ -299,7 +298,9 @@ if __name__ == "__main__":
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--num_sky_points", type=int, default=0)
+    parser.add_argument("--num_sky_points", type=int, default=50_000)
+    parser.add_argument("--lambda_sky_gauss", type=float, default=0.05)
+    parser.add_argument("--lambda_sky_spec_col", type=float, default=0.5)
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
@@ -307,6 +308,8 @@ if __name__ == "__main__":
         f"dataset.eval={str(args.eval)}",
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
+        f"optimizer.lambda_sky_gauss={args.lambda_sky_gauss}",
+        f"optimizer.lambda_sky_spec_col={args.lambda_sky_spec_col}",
         f"+test_iterations={args.test_iterations}",
         f"+save_iterations={args.save_iterations}",
     ]

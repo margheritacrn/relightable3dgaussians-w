@@ -1,6 +1,6 @@
 # optimizer parameters
 # gaussians
-iterations: 50_000
+iterations:  50_000
 position_lr_init: 0.00016
 position_lr_final: 0.0000016
 position_lr_delay_mult: 0.01
@@ -30,7 +30,7 @@ lambda_depth_smooth: 0
 lambda_sky_gauss : 0.05
 lambda_delta_reg: 1e-3
 lambda_scale: 100.0
-lambda_sky_spec_col: 0
+lambda_sky_spec_col: 0.5
 # environment light 
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
