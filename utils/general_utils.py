@@ -286,7 +286,7 @@ def pinverse(A: torch.tensor):
     return torch.linalg.pinv(A, rtol=1e-6)
 
 
-def cartesian_to_polar_coord(xyz: torch.tensor, center:torch.tensor=torch.zeros(3, dtype=torch.float32, device="cuda"), radius: float=1.0):
+def cartesian_to_polar_coord(xyz: torch.tensor, center: torch.tensor=torch.zeros(3, dtype=torch.float32, device="cuda"), radius: float=1.0):
         theta = torch.acos((xyz[...,2]-center[2])/radius).unsqueeze(1)
         phi = torch.arctan((xyz[..., 1]-center[1])/(xyz[..., 0]-center[0])).unsqueeze(1)
         angles = torch.cat((theta, phi), dim=1)
