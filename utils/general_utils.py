@@ -233,6 +233,23 @@ def get_uniform_points_on_sphere_fibonacci(num_points, *, dtype=None, xnp=torch)
     z = xnp.sin(lat)
     return xnp.stack([x, y, z], -1)
 
+def sample__points_on_unit_hemisphere(num_points, *, dtype=None, xnp=torch):
+    if dtype is None:
+        dtype = xnp.float32
+    # Sample points on a portion of the unit hemisphere according to COLMAP coordinates system
+    y = - 1/2*xnp.rand(num_points)
+    theta = torch.acos(y)
+    theta_max = theta.max()
+    theta_min = theta.min()
+    # phi = xnp.pi*(2/3)*xnp.rand(num_points) -xnp.pi/3 # phi in [-pi/3, pi/3]
+    phi = xnp.pi(1/2)*xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/3, pi/3]
+    # phi = xnp.pi*xnp.rand(num_points)
+
+    # Spherical to cartesian
+    x = xnp.sin(phi) * xnp.sin(theta)
+    z = xnp.sin(theta) * xnp.cos(phi)
+    return xnp.stack([x, y, z], -1)
+
 
 def load_npy_tensors(path: Path):
     """The function loads all npy tensors in path."""
@@ -287,7 +304,7 @@ def pinverse(A: torch.tensor):
 
 
 def cartesian_to_polar_coord(xyz: torch.tensor, center: torch.tensor=torch.zeros(3, dtype=torch.float32, device="cuda"), radius: float=1.0):
-        theta = torch.acos((-xyz[...,1]-center[1])/radius).unsqueeze(1)
+        theta = torch.acos(torch.clamp((-xyz[...,1]-center[1])/radius, -1, 1)).unsqueeze(1)
         phi = torch.atan2(xyz[..., 0] - center[0], xyz[..., 2] - center[2]).unsqueeze(1)
         angles = torch.cat((theta, phi), dim=1)
         return angles

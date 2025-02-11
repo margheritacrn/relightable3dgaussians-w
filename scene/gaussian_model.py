@@ -20,7 +20,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci
+from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci, sample__points_on_unit_hemisphere
 from utils.graphics_utils import getWorld2View2
 import open3d as o3d
 import math
@@ -58,10 +58,7 @@ class GaussianModel:
 
 
 
-        self.metalness_activation = torch.sigmoid
-        self.albedo_activation = torch.sigmoid
-        self.roughness_activation = torch.sigmoid
-        self.roughness_bias = 0.
+        self.material_properties_activation = torch.sigmoid
         self.default_roughness = 0.6
 
         self.sky_angles_activation = torch.sigmoid
@@ -104,7 +101,7 @@ class GaussianModel:
 
     @property
     def get_sky_xyz(self):
-        sky_angles = self.get_sky_angles_sigmoid # self._sky_angles[self._is_sky.squeeze()] #self.get_sky_angles
+        sky_angles = self.get_sky_angles_clamp #self.get_sky_angles_sigmoid # self._sky_angles[self._is_sky.squeeze()]  # self.get_sky_angles_sigmoid  #  # self._sky_angles[self._is_sky.squeeze()] # self.get_sky_angles
         # In COLMAP coordinate system
         x = torch.sin(sky_angles[...,0])*torch.sin(sky_angles[...,1])
         y = -torch.cos(sky_angles[...,0])
@@ -147,39 +144,47 @@ class GaussianModel:
 
     @property
     def get_albedo(self):
-        return self.albedo_activation(self._albedo)
+        return self.material_properties_activation(self._albedo)
 
 
     @property
     def get_metalness(self):
-        return torch.where(self._is_sky, self._metalness, self.metalness_activation(self._metalness))
+        return torch.where(self._is_sky, self._metalness, self.material_properties_activation(self._metalness))
 
 
     @property
     def get_roughness(self):
-        return torch.where(self._is_sky, self._roughness, self.roughness_activation(self._roughness + self.roughness_bias))
+        return torch.where(self._is_sky, self._roughness, self.material_properties_activation(self._roughness))
     
     
     @property
     def get_sky_radius(self):
         return self._sky_radius
     
-    #TODO: remove
+    #TODO: remove: it cuts out too many points
     @property
     def get_sky_angles_sigmoid(self):
-        sky_theta = torch.pi*(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,0])).unsqueeze(1) - torch.pi
-        sky_phi = 2*torch.pi*(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,1])).unsqueeze(1)
+        sky_theta = torch.pi/2*(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,0])).unsqueeze(1)
+        sky_phi = (torch.pi*(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,1])) - torch.pi/2).unsqueeze(1)
         return torch.cat((sky_theta, sky_phi), dim=1)
+    
+    @property
+    def get_sky_angles_clamp(self):
+        theta_mask = (self._sky_angles[self._is_sky.squeeze()][...,0] < 0) | (self._sky_angles[self._is_sky.squeeze()][...,0] > torch.pi/2)
+        phi_mask = (self._sky_angles[self._is_sky.squeeze()][...,1] < -torch.pi/2) | (self._sky_angles[self._is_sky.squeeze()][...,1] > torch.pi/2)
+        phi_out_of_range = torch.sum(phi_mask)
+        theta_out_of_range = torch.sum(theta_mask)
+        sky_theta = torch.where(theta_mask, torch.clamp(self._sky_angles[self._is_sky.squeeze()][...,0], 0, torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,0])
+        sky_phi = torch.where(phi_mask, torch.clamp(self._sky_angles[self._is_sky.squeeze()][...,1], -torch.pi/2, torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,1])
+        return torch.cat((sky_theta.unsqueeze(1), sky_phi.unsqueeze(1)), dim=1)
 
 
     @property
     def get_sky_angles_modulus(self):
-        sky_angles_less_than_0 = (self._sky_angles[self._is_sky.squeeze()] < 0).any(dim=1)
-        sky_angles_less_than_0 = torch.sum(sky_angles_less_than_0)
-        sky_theta = torch.where(self._sky_angles[self._is_sky.squeeze()][...,0] > torch.pi,
-                                 torch.remainder(self._sky_angles[self._is_sky.squeeze()][...,0], torch.pi), self._sky_angles[self._is_sky.squeeze()][...,0]).unsqueeze(1)
-        sky_phi =  torch.where(self._sky_angles[self._is_sky.squeeze()][...,1] > 2*torch.pi,
-                               torch.remainder(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,1]), 2*torch.pi), self._sky_angles[self._is_sky.squeeze()][...,0]).unsqueeze(1)
+        sky_phi = torch.where(torch.abs(self._sky_angles[self._is_sky.squeeze()][...,1]) > torch.pi/2,
+                                 torch.fmod(self._sky_angles[self._is_sky.squeeze()][...,1], torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,1]).unsqueeze(1)
+        sky_theta =  torch.where(self._sky_angles[self._is_sky.squeeze()][...,0] > torch.pi,
+                               torch.remainder(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,0]), 2*torch.pi), self._sky_angles[self._is_sky.squeeze()][...,0]).unsqueeze(1)
         return torch.cat((sky_theta, sky_phi), dim=1)
 
 
@@ -254,13 +259,16 @@ class GaussianModel:
     def get_sky_xyz_init(self, num_points: int, cameras):
         """Adapted from https://arxiv.org/abs/2407.08447"""
         points = get_uniform_points_on_sphere_fibonacci(num_points*2)
+        points = sample__points_on_unit_hemisphere(num_points)
         points = points.to("cuda")
-        # Consider only pounts on upper half hemisphere
+        """
+        # Consider only points on upper half hemisphere
         points[:,1] = -torch.abs(points[:,1])
         points[:,2] = torch.abs(points[:,2])
         points = torch.unique(points, dim=0)
+        """
         mean = self._xyz.mean(0)[None]
-        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.97)*2
+        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.99)#*(1.5)
         scene_center = torch.tensor(get_scene_center(cameras), dtype=torch.float32, device="cuda").T
         points = points * sky_distance
         points = points + scene_center
@@ -281,8 +289,8 @@ class GaussianModel:
         self._sky_gauss_center = sky_gauss_center
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
         # Initialize polar coordinates:
-        self._sky_radius = nn.Parameter(torch.tensor(sky_distance, dtype=torch.float32, device="cuda")).requires_grad_(True)
-        sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius.detach())
+        self._sky_radius = nn.Parameter(torch.tensor(sky_distance, dtype=torch.float32, device="cuda"))
+        sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius)
         self._sky_angles = nn.Parameter(torch.cat((torch.full((self._xyz.shape[0], 2), torch.inf, device="cuda"), sky_angles), dim=0)).requires_grad_(True)
 
 
@@ -331,7 +339,7 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self._roughness], 'lr': training_args.roughness_lr, "name": "roughness"},
             {'params': [self._metalness], 'lr': training_args.metalness_lr, "name": "metalness"},
-            {'params': [self._sky_radius], 'lr': training_args.sky_radius_lr, "name": "sky_radius"},
+            # {'params': [self._sky_radius], 'lr': training_args.sky_radius_lr, "name": "sky_radius"},
             {'params': [self._sky_angles], 'lr': training_args.position_lr_init*self.spatial_lr_scale, "name": "sky_angles"},
         ]
 
@@ -369,7 +377,7 @@ class GaussianModel:
                 param_group['lr'] = lr
 
 
-    def construct_list_of_attributes(self, viewer_fmt=False):
+    def construct_list_of_attributes(self):
         l = ['x', 'y', 'z']
         # All channels except the 3 DC
         for i in range(self._albedo.shape[1]):
@@ -382,15 +390,16 @@ class GaussianModel:
         l.append('roughness')
         l.append('metalness')
         l.append('is_sky')
-        l.append('sky_radius')
-        for i in range(self._sky_gauss_center.shape[1]):
-            l.append('sky_gauss_center_{}'.format(i))
-        for i in range(self._sky_angles.shape[1]):
-            l.append('sky_angles_{}'.format(i))
+        if torch.sum(self._is_sky) > 0:
+            l.append('sky_radius')
+            for i in range(self._sky_gauss_center.shape[1]):
+                l.append('sky_gauss_center_{}'.format(i))
+            for i in range(self._sky_angles.shape[1]):
+                l.append('sky_angles_{}'.format(i))
         return l
 
 
-    def save_ply(self, path, viewer_fmt=False):
+    def save_ply(self, path):
         mkdir_p(os.path.dirname(path))
 
         xyz = self.get_xyz.detach().cpu().numpy()
@@ -405,20 +414,14 @@ class GaussianModel:
         sky_radius = self._sky_radius.repeat(xyz.shape[0],1).cpu().numpy()
         sky_gauss_center = self._sky_gauss_center.repeat(xyz.shape[0],1).cpu().numpy()
         sky_angles = self._sky_angles.cpu().numpy()
-        
-        #TODO: remove f_rest and normals and refactor if below (useless)
-        if viewer_fmt:
-            albedo = 0.5 + (0.5*normals)
-            f_rest = np.zeros((f_rest.shape[0], 45))
-            normals = np.zeros_like(normals)
 
-        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes(viewer_fmt)]
+        dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        if not viewer_fmt:
+        if torch.sum(self._is_sky) > 0:
             attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness, is_sky, sky_radius, sky_gauss_center, sky_angles), axis=1)
         else:
-            attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness, is_sky, sky_radius, sky_gauss_center, sky_angles), axis=1)
+            attributes = np.concatenate((xyz, albedo, opacities, scale, rotation, roughness, metalness, is_sky), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -489,7 +492,7 @@ class GaussianModel:
         self._roughness = nn.Parameter(torch.tensor(roughness, dtype=torch.float, device="cuda").requires_grad_(True))
         self._metalness = nn.Parameter(torch.tensor(metalness, dtype=torch.float, device="cuda").requires_grad_(True))
         self._is_sky = torch.tensor(is_sky, dtype=torch.bool, device="cuda")
-        self._sky_radius = nn.Parameter(torch.tensor(sky_radius, dtype=torch.float, device="cuda")).requires_grad_(True)
+        self._sky_radius = nn.Parameter(torch.tensor(sky_radius, dtype=torch.float, device="cuda"))
         self._sky_gauss_center = nn.Parameter(torch.tensor(sky_gauss_center, dtype=torch.float, device="cuda"))
         self._sky_angles = torch.tensor(sky_angles, dtype=torch.float, device="cuda")
 
@@ -649,8 +652,8 @@ class GaussianModel:
         new_metalness = self._metalness[selected_pts_mask].repeat(N,1)
         new_is_sky = self._is_sky[selected_pts_mask].repeat(N,1)
         # Project sampled positions for sky Gaussians on the sphere
-        new_xyz[new_is_sky.squeeze()] = self._sky_gauss_center + self._sky_radius.detach()*(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center)/torch.norm(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center, dim=1)[..., None]
-        new_sky_angles = torch.where(new_is_sky, cartesian_to_polar_coord(new_xyz, self._sky_gauss_center.squeeze(), self._sky_radius.detach()), self._sky_angles[selected_pts_mask].repeat(N,1))
+        new_xyz[new_is_sky.squeeze()] = self._sky_gauss_center + self._sky_radius*(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center)/torch.norm(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center, dim=1)[..., None]
+        new_sky_angles = torch.where(new_is_sky, cartesian_to_polar_coord(new_xyz, self._sky_gauss_center.squeeze(), self._sky_radius), self._sky_angles[selected_pts_mask].repeat(N,1))
     
         self.densification_postfix(new_xyz[~(new_is_sky.squeeze())], new_albedo, new_features_rest, new_opacity, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_is_sky, new_sky_angles)
