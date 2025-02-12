@@ -175,18 +175,15 @@ def readNerfOsrInfo(path, images, eval, masks_extension = ".png"):
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     train_images = [imagename.split(".")[0] for imagename in os.listdir(path + "/train/rgb")]
-    test_images = [imagename.split(".")[0] for imagename in os.listdir(path + "/test/rgb")]
+    train_cam_infos_unsorted = [c for c in cam_infos if c.image_name in train_images]
+    train_cam_infos = sorted(train_cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
     if eval:
-        train_cam_infos_unsorted = [c for c in cam_infos if c.image_name in train_images]
+        test_images = [imagename.split(".")[0] for imagename in os.listdir(path + "/test/rgb")]
         test_cam_infos_unsorted = [c for c in cam_infos if c.image_name in test_images]
-    else:
-        train_cam_infos_unsorted = cam_infos
-        test_cam_infos = []
-    
-    train_cam_infos = sorted(train_cam_infos_unsorted.copy(), key = lambda x : x.image_name)
-    if eval:
         test_cam_infos = sorted(test_cam_infos_unsorted.copy(), key = lambda x : x.image_name)
+    else:
+        test_cam_infos = []
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
     try:
