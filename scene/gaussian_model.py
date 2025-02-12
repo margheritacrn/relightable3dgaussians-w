@@ -170,10 +170,9 @@ class GaussianModel:
     
     @property
     def get_sky_angles_clamp(self):
+        # theta admitted range: [0, pi/2], phi admitted range: [-pi/2, pi72]
         theta_mask = (self._sky_angles[self._is_sky.squeeze()][...,0] < 0) | (self._sky_angles[self._is_sky.squeeze()][...,0] > torch.pi/2)
         phi_mask = (self._sky_angles[self._is_sky.squeeze()][...,1] < -torch.pi/2) | (self._sky_angles[self._is_sky.squeeze()][...,1] > torch.pi/2)
-        phi_out_of_range = torch.sum(phi_mask)
-        theta_out_of_range = torch.sum(theta_mask)
         sky_theta = torch.where(theta_mask, torch.clamp(self._sky_angles[self._is_sky.squeeze()][...,0], 0, torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,0])
         sky_phi = torch.where(phi_mask, torch.clamp(self._sky_angles[self._is_sky.squeeze()][...,1], -torch.pi/2, torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,1])
         return torch.cat((sky_theta.unsqueeze(1), sky_phi.unsqueeze(1)), dim=1)
