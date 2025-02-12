@@ -27,7 +27,7 @@ import math
 
 
 class GaussianModel:
-    def __init__(self, sh_degree : int):
+    def __init__(self):
 
         def build_covariance_from_scaling_rotation(scaling, scaling_modifier, rotation):
             L = build_scaling_rotation(scaling_modifier * scaling, rotation)
@@ -35,12 +35,9 @@ class GaussianModel:
             symm = strip_symmetric(actual_covariance)
             return symm
 
-        self.active_sh_degree = 0
-        self.max_sh_degree = sh_degree  
 
         self._xyz = torch.empty(0)
         self._albedo = torch.empty(0)
-        self._features_rest = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
@@ -101,20 +98,13 @@ class GaussianModel:
 
     @property
     def get_sky_xyz(self):
-        sky_angles = self.get_sky_angles_clamp #self.get_sky_angles_sigmoid # self._sky_angles[self._is_sky.squeeze()]  # self.get_sky_angles_sigmoid  #  # self._sky_angles[self._is_sky.squeeze()] # self.get_sky_angles
+        sky_angles = self.get_sky_angles_clamp
         # In COLMAP coordinate system
         x = torch.sin(sky_angles[...,0])*torch.sin(sky_angles[...,1])
         y = -torch.cos(sky_angles[...,0])
         z = torch.sin(sky_angles[...,0])*torch.cos(sky_angles[...,1])
         sky_xyz = self._sky_radius*torch.stack([x, y, z], dim=-1) +  self._sky_gauss_center.squeeze()
         return sky_xyz
-
-
-    @property
-    def get_features(self):
-        albedo = self._albedo
-        features_rest = self._features_rest
-        return torch.cat((albedo, features_rest), dim=1)
 
 
     @property
@@ -160,7 +150,7 @@ class GaussianModel:
     @property
     def get_sky_radius(self):
         return self._sky_radius
-    
+
     #TODO: remove: it cuts out too many points
     @property
     def get_sky_angles_sigmoid(self):
@@ -177,7 +167,6 @@ class GaussianModel:
         sky_phi = torch.where(phi_mask, torch.clamp(self._sky_angles[self._is_sky.squeeze()][...,1], -torch.pi/2, torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,1])
         return torch.cat((sky_theta.unsqueeze(1), sky_phi.unsqueeze(1)), dim=1)
 
-
     @property
     def get_sky_angles_modulus(self):
         sky_phi = torch.where(torch.abs(self._sky_angles[self._is_sky.squeeze()][...,1]) > torch.pi/2,
@@ -185,11 +174,6 @@ class GaussianModel:
         sky_theta =  torch.where(self._sky_angles[self._is_sky.squeeze()][...,0] > torch.pi,
                                torch.remainder(self.sky_angles_activation(self._sky_angles[self._is_sky.squeeze()][...,0]), 2*torch.pi), self._sky_angles[self._is_sky.squeeze()][...,0]).unsqueeze(1)
         return torch.cat((sky_theta, sky_phi), dim=1)
-
-
-    @property
-    def get_features_rest(self):
-        return self._features_rest
 
 
     @property
@@ -201,31 +185,10 @@ class GaussianModel:
     def get_is_sky(self):
         return self._is_sky
 
-    #TODO: remove
-    def update_sky_xyz(self):
-        sky_angles = self.get_sky_angles
-        x = torch.sin(sky_angles[...,0])*torch.sin(sky_angles[...,1])
-        y = -torch.cos(sky_angles[...,0])
-        z = torch.sin(sky_angles[...,0])*torch.cos(sky_angles[...,1])
-        sky_xyz = self._sky_radius*torch.stack([x, y, z], dim=-1)
-        self._xyz = self._xyz.clone()
-        sky_idxs = self._is_sky.nonzero(as_tuple=True)[0]
-        self._xyz.index_put_((sky_idxs,), sky_xyz)
-
-
-    def oneupSHdegree(self):
-        if self.active_sh_degree < self.max_sh_degree:
-            self.active_sh_degree += 1
-
 
     def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = 5
         fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        # get fused color in RGB format
-        fused_color = torch.tensor(np.asarray(pcd.colors)).float().cuda()
-        features = torch.zeros((fused_color.shape[0], 3)).float().cuda()
-        features[:, :3 ] = fused_color
-        features[:, 3: ] = 0.0
 
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
@@ -238,9 +201,6 @@ class GaussianModel:
         opacities = inverse_sigmoid(0.1 * torch.ones((fused_point_cloud.shape[0], 1), dtype=torch.float, device="cuda"))
 
         self._xyz = nn.Parameter(fused_point_cloud.requires_grad_(True))
-        #TODO: check here
-        # self._albedo = nn.Parameter(features[:,:3].contiguous().requires_grad_(True))
-        self._features_rest = nn.Parameter(features[:,3:].contiguous().requires_grad_(True))
 
  
         self._albedo = nn.Parameter(torch.ones((fused_point_cloud.shape[0], 3), device="cuda").requires_grad_(True))
@@ -313,11 +273,7 @@ class GaussianModel:
         sky_max_radii2D = torch.zeros((sky_xyz.shape[0]), device=self.max_radii2D.device)
         self.max_radii2D = nn.Parameter(torch.cat([self.max_radii2D, sky_max_radii2D]))
 
-        #TODO: remove feature_rest
-        sky_f_rest = torch.zeros((sky_xyz.shape[0], 0), device=self._features_rest.device, requires_grad=True)
-        self._features_rest = nn.Parameter(torch.cat([self._features_rest, sky_f_rest]))
 
-    #TODO: fetures_rest
     def training_setup(self, training_args: dict):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
@@ -326,7 +282,6 @@ class GaussianModel:
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init*self.spatial_lr_scale, "name": "xyz"},
             {'params': [self._albedo], 'lr': training_args.feature_lr, "name": "albedo"},
-            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr*self.spatial_lr_scale, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
@@ -344,20 +299,6 @@ class GaussianModel:
         return l
 
 
-    def training_setup_SHoptim(self, training_args):
-        self.percent_dense = training_args.percent_dense
-        self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-        self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
-
-        l = [
-            {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
-        ]
-
-        self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
-        
-        self.f_rest_scheduler_args = get_const_lr_func(training_args.feature_lr / 20.0)
-
-
     def set_optimizer(self, optimizer: torch.optim):
         self.optimizer = optimizer
 
@@ -372,7 +313,6 @@ class GaussianModel:
 
     def construct_list_of_attributes(self):
         l = ['x', 'y', 'z']
-        # All channels except the 3 DC
         for i in range(self._albedo.shape[1]):
             l.append('albedo_{}'.format(i))
         l.append('opacity')
@@ -397,7 +337,6 @@ class GaussianModel:
 
         xyz = self.get_xyz.detach().cpu().numpy()
         albedo = self._albedo.detach().cpu().numpy()
-        f_rest = self._features_rest.detach().cpu().numpy()
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
@@ -478,7 +417,6 @@ class GaussianModel:
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
         self._albedo = nn.Parameter(torch.tensor(albedo, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._features_rest = nn.Parameter(torch.tensor(features_extra, dtype=torch.float, device="cuda").requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
@@ -488,8 +426,6 @@ class GaussianModel:
         self._sky_radius = nn.Parameter(torch.tensor(sky_radius, dtype=torch.float, device="cuda").requires_grad_(True))
         self._sky_gauss_center = nn.Parameter(torch.tensor(sky_gauss_center, dtype=torch.float, device="cuda"))
         self._sky_angles = torch.tensor(sky_angles, dtype=torch.float, device="cuda")
-
-        self.active_sh_degree = self.max_sh_degree
 
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -542,7 +478,6 @@ class GaussianModel:
 
         self._xyz = optimizable_tensors["xyz"]
         self._albedo = optimizable_tensors["albedo"]
-        self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -583,11 +518,10 @@ class GaussianModel:
         return optimizable_tensors
 
 
-    def densification_postfix(self, new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, \
+    def densification_postfix(self, new_xyz, new_albedo, new_opacities, new_scaling, new_rotation, \
                               new_roughness, new_metalness, new_is_sky, new_sky_angles):
         d = {
         "albedo": new_albedo,
-        "f_rest": new_features_rest,
         "opacity": new_opacities,
         "scaling" : new_scaling,
         "rotation" : new_rotation,
@@ -601,7 +535,6 @@ class GaussianModel:
         if "xyz" in optimizable_tensors.keys():
             self._xyz = optimizable_tensors["xyz"]
         self._albedo = optimizable_tensors["albedo"]
-        self._features_rest = optimizable_tensors["f_rest"]
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
@@ -639,7 +572,6 @@ class GaussianModel:
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_albedo = self._albedo[selected_pts_mask].repeat(N,1)
-        new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
         new_roughness = self._roughness[selected_pts_mask].repeat(N,1)
         new_metalness = self._metalness[selected_pts_mask].repeat(N,1)
@@ -648,7 +580,7 @@ class GaussianModel:
         new_xyz[new_is_sky.squeeze()] = self._sky_gauss_center + self._sky_radius.detach()*(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center)/torch.norm(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center, dim=1)[..., None]
         new_sky_angles = torch.where(new_is_sky, cartesian_to_polar_coord(new_xyz, self._sky_gauss_center.squeeze(), self._sky_radius.detach()), self._sky_angles[selected_pts_mask].repeat(N,1))
     
-        self.densification_postfix(new_xyz[~(new_is_sky.squeeze())], new_albedo, new_features_rest, new_opacity, new_scaling, new_rotation, 
+        self.densification_postfix(new_xyz[~(new_is_sky.squeeze())], new_albedo, new_opacity, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_is_sky, new_sky_angles)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
@@ -668,7 +600,6 @@ class GaussianModel:
         else:
             new_xyz = self.get_xyz[selected_pts_mask_non_sky]
         new_albedo = self._albedo[selected_pts_mask]
-        new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
@@ -683,7 +614,7 @@ class GaussianModel:
             new_xyz = new_xyz + grads[selected_pts_mask_non_sky]*normals[selected_pts_mask_non_sky]
 
 
-        self.densification_postfix(new_xyz, new_albedo, new_features_rest, new_opacities, new_scaling, new_rotation, 
+        self.densification_postfix(new_xyz, new_albedo, new_opacities, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_is_sky, new_sky_angles)
 
 

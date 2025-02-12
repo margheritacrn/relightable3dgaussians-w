@@ -57,10 +57,6 @@ def training(cfg, testing_iterations, saving_iterations):
     for iteration in range(1, cfg.optimizer.iterations + 1): 
         iter_start.record()
 
-        # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
-           model.gaussians.oneupSHdegree()
-
         # Pick a random Camera
         if not viewpoint_stack:
             viewpoint_stack = model.scene.getTrainCameras().copy()

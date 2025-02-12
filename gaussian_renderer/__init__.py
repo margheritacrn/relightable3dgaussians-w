@@ -92,10 +92,9 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=-1,
         campos=viewpoint_camera.camera_center,
-        prefiltered=False,
-        #debug=False
+        prefiltered=False
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -216,7 +215,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         scale_modifier=scaling_modifier,
         viewmatrix=viewpoint_camera.world_view_transform,
         projmatrix=viewpoint_camera.full_proj_transform,
-        sh_degree=pc.active_sh_degree,
+        sh_degree=-1,
         campos=viewpoint_camera.camera_center,
         prefiltered=False
     )

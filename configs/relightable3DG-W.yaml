@@ -1,5 +1,4 @@
 # model parameters
-sh_degree: 3 #to be removed
 envlight_sh_degree: 4
 init_embeddings: True
 init_sh_mlp: True

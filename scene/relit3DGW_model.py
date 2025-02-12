@@ -37,13 +37,13 @@ class Relightable3DGW:
                 for op in outputs_paths:
                     assert os.path.exists(os.path.join(self.config.dataset.model_path, op+f"/iteration_{self.load_iteration}")), f"Load iteration {self.load_iteration}- output path missing"
                     self.load_iteration = self.load_iteration
-            self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
+            self.gaussians: GaussianModel = GaussianModel()
             self.scene:  Scene = Scene(self.config.dataset, self.gaussians, load_iteration=self.load_iteration)
             self.train_cameras = self.scene.getTrainCameras().copy()
             self.test_cameras = self.scene.getTestCameras().copy()
             self.load_model()
         else:
-            self.gaussians: GaussianModel = GaussianModel(self.config.sh_degree)
+            self.gaussians: GaussianModel = GaussianModel()
             self.scene:  Scene = Scene(self.config.dataset, self.gaussians)
             self.train_cameras = self.scene.getTrainCameras().copy()
             self.test_cameras = self.scene.getTestCameras().copy()
