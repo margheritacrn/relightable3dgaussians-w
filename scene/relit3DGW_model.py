@@ -151,9 +151,9 @@ class Relightable3DGW:
                 param_group['lr'] = 0.0001
 
 
-    def get_envlights_sh_all(self, test=False):
+    def get_envlights_sh_all(self, eval=False):
         envlights_sh = {}
-        if test:
+        if eval:
             viewpoint_stack = self.scene.getTestCameras().copy()
         else:
             viewpoint_stack = self.scene.getTrainCameras().copy()
@@ -161,7 +161,7 @@ class Relightable3DGW:
         with torch.no_grad():
             for viewpoint_cam in viewpoint_stack:
                 viewpoint_cam_id = torch.tensor([viewpoint_cam.uid], device = 'cuda')
-                if test:
+                if eval:
                     image_embed = self.embeddings_test(viewpoint_cam_id)
                 else:
                     image_embed = self.embeddings(viewpoint_cam_id)
@@ -169,8 +169,8 @@ class Relightable3DGW:
         return envlights_sh
     
 
-    def render_envlights_sh_all(self, save_path: str, test=False, save_sh_coeffs=False):
-        envlights_sh = self.get_envlights_sh_all(test)
+    def render_envlights_sh_all(self, save_path: str, eval=False, save_sh_coeffs=False):
+        envlights_sh = self.get_envlights_sh_all(eval)
         for im_name in envlights_sh.keys():
             self.envlight.set_base(envlights_sh[im_name])
             if save_sh_coeffs:
@@ -239,7 +239,7 @@ class Relightable3DGW:
                                                 self.config.embeddings_dim)
         self.embeddings_test.cuda()
         optimizer = torch.optim.Adam(self.embeddings_test.parameters(), lr=self.config.optimizer.embeddings_lr)
-        self.initialize_embeddings(test=True)
+        self.initialize_embeddings(eval=True)
         viewpoint_stack = self.scene.getTestCameras().copy()
         background = torch.tensor([0,0,0], dtype=torch.float32, device="cuda")
         mse_loss = torch.nn.MSELoss()

@@ -233,10 +233,11 @@ def get_uniform_points_on_sphere_fibonacci(num_points, *, dtype=None, xnp=torch)
     z = xnp.sin(lat)
     return xnp.stack([x, y, z], -1)
 
+
 def sample_points_on_unit_hemisphere(num_points, *, dtype=None, xnp=torch):
     if dtype is None:
         dtype = xnp.float32
-    # Sample points on a portion of the unit hemisphere according to COLMAP coordinates system
+    # Sample points on a portion of the unit hemisphere (COLMAP coordinates system)
     y = - (1/2)*xnp.rand(num_points)
     theta = torch.acos(y)
     phi = xnp.pi*(1/2)*xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/3, pi/3]

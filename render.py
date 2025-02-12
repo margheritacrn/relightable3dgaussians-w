@@ -30,13 +30,6 @@ from scene.relit3DGW_model import Relightable3DGW
 import hydra
 
 
-def render_lightings(model_path, iteration, model):
-    print(f"Rendering illuminations")
-    lighting_path = os.path.join(model_path, "rendered_envlights_sh/"+"iteration_{}".format(iteration))
-    makedirs(lighting_path, exist_ok=True)
-    model.render_envlights_sh_all(save_path=lighting_path)
-
-
 def render_set(model_path, name, iteration, views, model, pipeline, background):
     render_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "gt")
@@ -83,9 +76,9 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
     print(f"{name}- rendering illuminations")
     if name == "test":
-        model.render_envlights_sh_all(save_path=lighting_path, test = True, save_sh_coeffs=True)
+        model.render_envlights_sh_all(save_path=lighting_path, eval = True, save_sh_coeffs=True)
     else:
-        model.render_envlights_sh_all(save_path=lighting_path, test = False, save_sh_coeffs=True)
+        model.render_envlights_sh_all(save_path=lighting_path, eval = False, save_sh_coeffs=True)
 
 
 def render_sets(cfg, skip_train : bool, skip_test : bool):
@@ -101,24 +94,6 @@ def render_sets(cfg, skip_train : bool, skip_test : bool):
         if not skip_test:
              model.optimize_embeddings_test()
              render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background)
-
-        # render_lightings(model.config.dataset.model_path, model.load_iteration, model)
-
-
-def render_sets_training(model: Relightable3DGW, skip_train : bool, skip_test : bool):
-    with torch.no_grad():
-        bg_color = [1,1,1] if model.config.dataset.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
-
-        if not skip_train:
-             render_set(model.config.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, model.config.pipe, background)
-
-        if not skip_test:
-             # Optimize embeddings for test set
-             model.optimize_embeddings_test()
-             render_set(model.config.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, model.config.pipe, background)
-
-        render_lightings(model.config.dataset.model_path, "rendered_envlights_sh", model) # only for train sofar
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")

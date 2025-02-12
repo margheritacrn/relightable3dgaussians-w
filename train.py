@@ -28,7 +28,6 @@ from scene.net_models import SHMlp, EmbeddingNet
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from omegaconf import DictConfig
-from render import render_sets_training
 import hydra
 
 
