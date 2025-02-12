@@ -275,6 +275,10 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
             _, full = ssim_skimage(rendered_np, gt_image_np, win_size=5, channel_axis=2, full=True, data_range=1.0)
             mssim_over_mask = (torch.tensor(full).cuda()*mask.unsqueeze(-1)).sum() / (3*mask.sum())
             ssims.append(mssim_over_mask)
+    psnrs_dict = {img_name: psnr.item() for img_name, psnr in zip(img_names, psnrs)}
+    mses_dict = {img_name: mse.item() for img_name, mse in zip(img_names, mses)}
+    maes_dict = {img_name: mae.item() for img_name, mae in zip(img_names, maes)}
+    ssims_dict = {img_name: ssim.item() for img_name, ssim in zip(img_names, ssims)}
     # Print metrics
     print("  PSNR: {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"))
     print("  MSE: {:>12.7f}".format(torch.tensor(mses).mean(), ".5"))
@@ -286,7 +290,10 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         print("  MSE: {:>12.7f}".format(torch.tensor(mses).mean(), ".5"), file=f)
         print("  MAE: {:>12.7f}".format(torch.tensor(maes).mean(), ".5"), file=f)
         print("  SSIM: {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"), file=f)
-
+        print(f"  best PSNRs: {psnrs_dict}", file=f)
+        print(f"  best MSEs: {mses_dict}", file=f)
+        print(f"  best MAEs: {maes_dict}", file=f)
+        print(f"  best SSIMs: {ssims_dict}", file=f)
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
