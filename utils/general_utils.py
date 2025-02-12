@@ -237,7 +237,7 @@ def sample_points_on_unit_hemisphere(num_points, *, dtype=None, xnp=torch):
     if dtype is None:
         dtype = xnp.float32
     # Sample points on a portion of the unit hemisphere according to COLMAP coordinates system
-    y = - xnp.rand(num_points)
+    y = - (1/2)*xnp.rand(num_points)
     theta = torch.acos(y)
     phi = xnp.pi*(1/2)*xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/3, pi/3]
 
