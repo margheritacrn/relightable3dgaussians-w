@@ -5,7 +5,7 @@ config = {
             "mask_path": "../data/nerfosr_colmap/lk2/test/mask/01-08_07_30_IMG_6710.png",
             "env_map_path": "../data/nerfosr_colmap/lk2/test/ENV_MAP_CC/01-08_07_30/20210801_082411.jpg",
             "initial_env_map_rotation": {
-                "x":  np.pi*(-1/3), # -0.12643281,
+                "x":  np.pi*(-1/2), # -0.12643281,
                 "y": 0,
                 "z": 0,
             },
@@ -19,7 +19,7 @@ config = {
             "mask_path": "../data/nerfosr_colmap/lk2/test/mask/08-08_16_00_IMG_7850.png",
             "env_map_path": "../data/nerfosr_colmap/lk2/test/ENV_MAP_CC/08-08_16_00/20210808_164134.jpg",
             "initial_env_map_rotation": {
-                "x": np.pi*(-1/3), # -0.12,
+                "x": np.pi*(-1/2), # -0.12,
                 "y": 0,
                 "z": 0,
             },
@@ -33,7 +33,7 @@ config = {
             "mask_path": "../data/nerfosr_colmap/lk2/test/mask/28-07_10_00_DSC_0055.png",
             "env_map_path": "../data/nerfosr_colmap/lk2/test/ENV_MAP_CC/28-07_10_00/20210728_122650.jpg",
             "initial_env_map_rotation": {
-                "x": np.pi*(-1/3), # -0.07,
+                "x": np.pi*(-1/2), # -0.07,
                 "y": 0,
                 "z": 0,
             },
@@ -47,7 +47,7 @@ config = {
             "mask_path": "../data/nerfosr_colmap/lk2/test/mask/29-07_12_00_IMG_5424.png",
             "env_map_path": "../data/nerfosr_colmap/lk2/test/ENV_MAP_CC/29-07_12_00/20210729_125318.jpg",
             "initial_env_map_rotation": {
-                "x": np.pi*(-1/3), # 2.05455116e-04,
+                "x": np.pi*(-1/2), # 2.05455116e-04,
                 "y": 0,
                 "z": 0,
             },
@@ -61,7 +61,7 @@ config = {
             "mask_path": "../data/nerfosr_colmap/lk2/test/mask/29-07_20_30_IMG_5607.png",
             "env_map_path": "../data/nerfosr_colmap/lk2/test/ENV_MAP_CC/29-07_20_30/20210729_203644.jpg",
             "initial_env_map_rotation": {
-                "x": np.pi*(-1/3), # -0.034,
+                "x": np.pi*(-1/2), # -0.034,
                 "y": 0,
                 "z": 0,
             },
