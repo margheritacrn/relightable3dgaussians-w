@@ -160,7 +160,7 @@ class GaussianModel:
     
     @property
     def get_sky_angles_clamp(self):
-        # theta admitted range: [0, pi/2], phi admitted range: [-pi/2, pi72]
+        # theta admitted range: [0, pi/2], phi admitted range: [-pi/2, pi/2]
         theta_mask = (self._sky_angles[self._is_sky.squeeze()][...,0] < 0) | (self._sky_angles[self._is_sky.squeeze()][...,0] > torch.pi/2)
         phi_mask = (self._sky_angles[self._is_sky.squeeze()][...,1] < -torch.pi/2) | (self._sky_angles[self._is_sky.squeeze()][...,1] > torch.pi/2)
         sky_theta = torch.where(theta_mask, torch.clamp(self._sky_angles[self._is_sky.squeeze()][...,0], 0, torch.pi/2), self._sky_angles[self._is_sky.squeeze()][...,0])
@@ -215,14 +215,14 @@ class GaussianModel:
     
     
     @torch.no_grad()
-    def get_sky_xyz_init(self, num_points: int, cameras):
+    def get_sky_xyz_init(self, cameras):
         """Adapted from https://arxiv.org/abs/2407.08447"""
-        points = get_uniform_points_on_sphere_fibonacci(num_points*2)
-        points = sample_points_on_unit_hemisphere(num_points)
-        points = points.to("cuda")
         mean = self._xyz.mean(0)[None]
-        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.99)#*(1.5)
+        sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.99)
         scene_center = torch.tensor(get_scene_center(cameras), dtype=torch.float32, device="cuda").T
+        num_sky_points = int(5000*sky_distance.item())
+        points = sample_points_on_unit_hemisphere(num_sky_points)
+        points = points.to("cuda")
         points = points * sky_distance
         points = points + scene_center
         gmask = torch.zeros((points.shape[0],), dtype=torch.bool, device=points.device)
@@ -237,8 +237,8 @@ class GaussianModel:
         return points[gmask], sky_distance, scene_center
 
 
-    def augment_with_sky_gaussians(self, num_points: int, cameras):
-        sky_xyz, sky_distance, sky_gauss_center = self.get_sky_xyz_init(num_points, cameras)
+    def augment_with_sky_gaussians(self, cameras):
+        sky_xyz, sky_distance, sky_gauss_center = self.get_sky_xyz_init(cameras)
         self._sky_gauss_center = sky_gauss_center
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
         # Initialize polar coordinates:
