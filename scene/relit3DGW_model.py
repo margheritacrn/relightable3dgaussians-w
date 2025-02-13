@@ -18,6 +18,7 @@ from gaussian_renderer import render
 from utils.loss_utils import l1_loss, ssim, sky_depth_loss
 from PIL import Image
 from random import randint
+import torchvision
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="relightable3DG-W")
@@ -176,9 +177,8 @@ class Relightable3DGW:
             if save_sh_coeffs:
                 np.save(os.path.join(save_path, im_name + ".npy"), self.envlight.base)
             rendered_sh = self.envlight.render_sh()
-            rendered_img = Image.fromarray(rendered_sh)
             save_path_im = os.path.join(save_path, im_name + ".jpg")
-            rendered_img.save(save_path_im)
+            torchvision.utils.save_image(rendered_sh.permute(2,0,1), save_path_im)
 
 
     def save_config(self):

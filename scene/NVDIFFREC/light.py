@@ -222,12 +222,11 @@ class EnvironmentLight(torch.nn.Module):
         return rgb, extras
 
 
-    def render_sh(self, width: int = 600)->np.array:
+    def render_sh(self, width: int = 600)->torch.tensor:
         """Render environment light SH coefficients in equirectangular format"""
         self.base = self.base.squeeze()
-        rendered_sh = sh_render(self.base, width = width)
-        rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
-        rendered_sh = rendered_sh.astype(np.uint8)
+        rendered_sh = torch.tensor(sh_render(self.base, width = width))
+        rendered_sh = util.gamma_correction(rendered_sh)
         return rendered_sh
 
 
