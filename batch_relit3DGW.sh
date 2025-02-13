@@ -5,7 +5,7 @@
 #SBATCH --output=%j_%x.out
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --gpus=3
+#SBATCH --gpus=1
 
 #####################################################################################
 #--cpus-per-task=8
