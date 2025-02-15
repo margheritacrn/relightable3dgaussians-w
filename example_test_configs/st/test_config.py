@@ -5,7 +5,7 @@ config = {
         "mask_path": "../data/nerfosr_colmap/st/test/mask/01-09_14_00_IMG_0706.png",
         "env_map_path": "../data/nerfosr_colmap/st/test/ENV_MAP_CC/01-09_14_00/20210901_140700.jpg",
         "initial_env_map_rotation": {
-            "x": np.pi*(-1/2),
+            "x": np.pi * (-95 / 180),
             "y": 0,
             "z": 0,
         },
@@ -19,7 +19,7 @@ config = {
         "mask_path": "../data/nerfosr_colmap/st/test/mask/24-08_11_30_IMG_9690.png",
         "env_map_path": "../data/nerfosr_colmap/st/test/ENV_MAP_CC/24-08_11_30/20210824_114352.jpg",
         "initial_env_map_rotation": {
-            "x": np.pi*(-1/2),
+            "x": np.pi * (-95 / 180),
             "y": 0,
             "z": 0,
         },
@@ -33,7 +33,7 @@ config = {
         "mask_path": "../data/nerfosr_colmap/st/test/mask/24-08_16_30_IMG_0061.png",
         "env_map_path": "../data/nerfosr_colmap/st/test/ENV_MAP_CC/24-08_16_30/20210824_173357.jpg",
         "initial_env_map_rotation": {
-            "x": np.pi*(-1/2),
+            "x": np.pi * (-95 / 180),
             "y": 0,
             "z": 0,
         },
@@ -47,7 +47,7 @@ config = {
         "mask_path": "../data/nerfosr_colmap/st/test/mask/25-08_19_30_IMG_0306.png",
         "env_map_path": "../data/nerfosr_colmap/st/test/ENV_MAP_CC/25-08_19_30/20210825_185546.jpg",
         "initial_env_map_rotation": {
-            "x": np.pi*(-1/2),
+            "x": np.pi * (-95 / 180),
             "y": 0,
             "z": 0,
         },
@@ -61,7 +61,7 @@ config = {
         "mask_path": "../data/nerfosr_colmap/st/test/mask/31-08_07_30_IMG_0501.png",
         "env_map_path": "../data/nerfosr_colmap/st/test/ENV_MAP_CC/31-08_07_30/20210831_075634.jpg",
         "initial_env_map_rotation": {
-            "x": np.pi*(-1/2),
+            "x": np.pi * (-95 / 180),
             "y": 0,
             "z": 0,
         },
