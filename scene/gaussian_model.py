@@ -20,7 +20,7 @@ from plyfile import PlyData, PlyElement
 from utils.sh_utils import RGB2SH
 from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
-from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, get_uniform_points_on_sphere_fibonacci, sample_points_on_unit_hemisphere
+from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, sample_points_on_unit_hemisphere
 from utils.graphics_utils import getWorld2View2
 import open3d as o3d
 import math
@@ -117,8 +117,8 @@ class GaussianModel:
     
     #TODO: remove NORMALIZATION (not needed) , it's here not to edit gaussian_renderer module.
     def get_normal(self, dir_pp_normalized=None, normalize=False):
-        normal_axis = self.get_minimum_axis
-        normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
+        normal_axis_pgsr = get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
+        normal_axis, _ = flip_align_view(normal_axis_pgsr, dir_pp_normalized)
         if normalize:
             normal_axis = torch.nn.functional.normalize(normal_axis, p=2, dim=1)
         return normal_axis
