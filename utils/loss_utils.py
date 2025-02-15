@@ -132,8 +132,8 @@ def depth_loss_gaussians(mean_depth_sky, mean_depth_non_sky, gamma = 0.02):
     return loss
 
 
-def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
-    """Computes the predicted normal supervision loss defined in ref-NeRF."""
+def predicted_normal_loss(normal, normal_ref, alpha=None):
+    """Computes the predicted normal supervision loss defined in Ref-NeRF."""
     # normal: (3, H, W), normal_ref: (3, H, W), alpha: (3, H, W)
     if alpha is not None:
         device = alpha.device
@@ -149,15 +149,13 @@ def predicted_normal_loss(normal, normal_ref, alpha=None, sky_mask = None):
         weight = torch.ones_like(normal_ref)
 
     w = weight.permute(1,2,0).reshape(-1,3)[...,0].detach()
-    if sky_mask is not None and torch.sum(sky_mask == 0) > 0:
-        # Exclude sky region
-        sky_mask = sky_mask.expand_as(normal)
-        normal_ref = normal_ref*sky_mask
-        normal = normal*sky_mask
     n = normal_ref.permute(1,2,0).reshape(-1,3).detach()
     n_pred = normal.permute(1,2,0).reshape(-1,3)
     # Compute cos between n and n_pred, for them to be perfectly aligned it has to be 1
-    loss = ((1.0 - torch.sum(n * n_pred, axis=-1))).mean()
+    with torch.no_grad():
+        loss_old = (w*(1.0 - torch.sum(n * n_pred, axis=-1))).mean()
+    loss = (1 - (normal * normal_ref).sum(dim=0))[None]
+    loss = loss.mean()
 
     return loss
 
