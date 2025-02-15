@@ -154,20 +154,12 @@ def safe_state(silent):
     torch.manual_seed(0)
     torch.cuda.set_device(torch.device("cuda:0"))
 
-"""
-def get_minimum_axis(scales, rotations):
-    min_scales_arg = torch.argmin(scales, dim=-1)
-    min_R_axis = rotations.gather(2, min_scales_arg[:, None, None].expand(-1,3,-1)).squeeze(-1)
-
-    return min_R_axis
-"""
 
 def get_minimum_axis(scales, R):
-    sorted_idx = torch.argsort(scales, descending=False, dim=-1)
-    R_sorted = torch.gather(R, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
-    x_axis = R_sorted[:,:,0] # already normalized
+    smallest_axis_idx = scales.min(dim=-1)[1][..., None, None].expand(-1, 3, -1)
+    smallest_axis = R.gather(2, smallest_axis_idx)
+    return smallest_axis.squeeze(dim=2)
 
-    return x_axis
 
 def flip_align_view(normal, viewdir):
     # normal: (N, 3), viewdir: (N, 3)
@@ -241,7 +233,7 @@ def sample_points_on_unit_hemisphere(num_points, *, dtype=None, xnp=torch):
     torch.manual_seed(0)
     y = - 0.5*xnp.rand(num_points)
     theta = torch.acos(y)
-    phi = xnp.pi*(1/2)*xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/3, pi/3]
+    phi = xnp.pi*(1/2)*xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/4, pi/4]
     # Spherical to cartesian
     x = xnp.sin(phi) * xnp.sin(theta)
     z = xnp.sin(theta) * xnp.cos(phi)
