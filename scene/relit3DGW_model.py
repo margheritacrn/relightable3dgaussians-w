@@ -239,7 +239,7 @@ class Relightable3DGW:
                                                 self.config.embeddings_dim)
         self.embeddings_test.cuda()
         optimizer = torch.optim.Adam(self.embeddings_test.parameters(), lr=self.config.optimizer.embeddings_lr)
-        self.initialize_embeddings(eval=True)
+        self.initialize_embeddings(test=True)
         viewpoint_stack = self.scene.getTestCameras().copy()
         background = torch.tensor([0,0,0], dtype=torch.float32, device="cuda")
         mse_loss = torch.nn.MSELoss()
