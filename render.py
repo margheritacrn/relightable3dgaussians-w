@@ -74,6 +74,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             elif "normal" in k:
                 render_pkg[k] = 0.5 + (0.5*render_pkg[k])
             torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
+
     print(f"{name}- rendering illuminations")
     if name == "test":
         model.render_envlights_sh_all(save_path=lighting_path, eval = True, save_sh_coeffs=True)
