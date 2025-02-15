@@ -158,8 +158,11 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         else:
             test_cameras = [c for c in model.scene.getTestCameras() if c.image_name in config_test_names]
 
-        renders_path = os.path.join(cfg.dataset.model_path, "eval_gt_envmap", "test", "iteration_{}".format(model.load_iteration), "renders")
-        gts_path = os.path.join(cfg.dataset.model_path, "eval_gt_envmap", "test", "iteration_{}".format(model.load_iteration), "gt")
+        out_dir_name = "eval_gt_envmap"
+        if eval_all:
+            out_dir_name = "eval_gt_envmap_all"
+        renders_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders")
+        gts_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "gt")
         makedirs(renders_path, exist_ok=True)
         makedirs(gts_path, exist_ok=True)
 
@@ -194,6 +197,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
 
             # Get eval mask
             if eval_all and view.image_name not in config_test.keys():
+                mask_path = os.path.join(cfg.dataset.source_path, "test", "cityscapes_mask", "binary_masks", view.image_name + ".png")
+                """
                 occluders_mask_path = os.path.join(cfg.dataset.source_path, "masks", view.image_name + ".png")
                 occluders_mask = cv2.imread(occluders_mask_path, cv2.IMREAD_GRAYSCALE)
                 occluders_mask = cv2.resize(occluders_mask, (gt_image.shape[2], gt_image.shape[1]))
@@ -201,9 +206,9 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
                 sky_mask = cv2.imread(sky_mask_path, cv2.IMREAD_GRAYSCALE)
                 sky_mask = cv2.resize(sky_mask, (gt_image.shape[2], gt_image.shape[1]))
                 mask = cv2.bitwise_and((sky_mask).astype(np.uint8), (occluders_mask).astype(np.uint8))
-            else:
-                mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-                mask = cv2.resize(mask, (gt_image.shape[2], gt_image.shape[1]))
+                """
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            mask = cv2.resize(mask, (gt_image.shape[2], gt_image.shape[1]))
             kernel = np.ones((5, 5), np.uint8)
             mask = cv2.erode(mask, kernel, iterations=1)
             mask = torch.from_numpy(mask//255).cuda()
