@@ -152,9 +152,7 @@ def predicted_normal_loss(normal, normal_ref, alpha=None):
     n = normal_ref.permute(1,2,0).reshape(-1,3).detach()
     n_pred = normal.permute(1,2,0).reshape(-1,3)
     # Compute cos between n and n_pred, for them to be perfectly aligned it has to be 1
-    with torch.no_grad():
-        loss_old = (w*(1.0 - torch.sum(n * n_pred, axis=-1))).mean()
-    loss = (1 - (normal * normal_ref).sum(dim=0))[None]
+    loss = (w*(1.0 - torch.sum(n * n_pred, axis=-1))).mean()
     loss = loss.mean()
 
     return loss
