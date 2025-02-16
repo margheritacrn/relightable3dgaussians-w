@@ -21,12 +21,14 @@ parser.add_argument("--skip_metrics", action="store_true")
 parser.add_argument("--output_path", default="./eval")
 parser.add_argument("--num_sky_points", type=int, default=50_000)
 parser.add_argument("--lambda_sky_gauss", type=float, default=0.05)
+parser.add_argument("--reg_normal_from_iter", type=float, default=15_000)
+parser.add_argument("--reg_sky_gauss_depth_from_iter", type=float, default=0)
 parser.add_argument("--lambda_sky_spec_col", type=float, default=0.5)
 args, _ = parser.parse_known_args()
 
 if not args.skip_training:
     common_args = " --quiet --save_iterations 15_000 30_000 50_000 "
-    optimizer_args = f" --num_sky_points  {str(args.num_sky_points)} --lambda_sky_gauss {str(args.lambda_sky_gauss)} --lambda_sky_spec_col {str(args.lambda_sky_spec_col)} "
+    optimizer_args = f" --num_sky_points  {str(args.num_sky_points)} --lambda_sky_gauss {str(args.lambda_sky_gauss)} --lambda_sky_spec_col {str(args.lambda_sky_spec_col)} --reg_sky_gauss_depth_from_iter {str(args.reg_sky_gauss_depth_from_iter)} --reg_normal_from_iter {str(args.reg_normal_from_iter)} "
     for scene in nerfosr_scenes:
         source = args.nerfosr + "/" + scene
         os.system("python train.py --source_path " + source + " --model_path " + args.output_path + "/" + scene + optimizer_args + common_args)

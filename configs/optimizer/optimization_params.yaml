@@ -27,6 +27,7 @@ reg_normal_from_iter: 6_000 #15_000
 lambda_normal: 0.05
 smooth_depth_from_iter: 15_000 #15000 #15_000
 lambda_depth_smooth: 0
+reg_sky_gauss_depth_from_iter: 0
 lambda_sky_gauss : 0.05
 lambda_delta_reg: 1e-3
 lambda_scale: 100.0

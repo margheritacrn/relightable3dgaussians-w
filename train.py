@@ -110,8 +110,9 @@ def training(cfg, testing_iterations, saving_iterations):
             loss += scale_loss
 
         # Depth regularization
-        if cfg.optimizer.lambda_sky_gauss > 0:
-                if cfg.num_sky_points > 0:
+        if iteration > cfg.optimizer.reg_sky_gauss_depth_from_iter:
+            if cfg.optimizer.lambda_sky_gauss > 0:
+                if torch.sum(model.gaussians.get_is_sky) > 0:
                     sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
                     gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
                     sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
@@ -120,7 +121,7 @@ def training(cfg, testing_iterations, saving_iterations):
                     depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss*depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
                     loss += depth_loss_sky_gauss
                 else:
-                    _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=sky_mask)
+                    _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
                     loss += cfg.optimizer.lambda_sky_gauss*sky_depth_loss_
 
         if iteration > cfg.optimizer.smooth_depth_from_iter: 
@@ -302,6 +303,8 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--num_sky_points", type=int, default=50_000)
     parser.add_argument("--lambda_sky_gauss", type=float, default=0.05)
+    parser.add_argument("--reg_normal_from_iter", type=float, default=15_000)
+    parser.add_argument("--reg_sky_gauss_depth_from_iter", type=float, default=0)
     parser.add_argument("--lambda_sky_spec_col", type=float, default=0.5)
     args = parser.parse_args(sys.argv[1:])
 
@@ -311,6 +314,8 @@ if __name__ == "__main__":
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
         f"optimizer.lambda_sky_gauss={args.lambda_sky_gauss}",
+        f"optimizer.reg_normal_from_iter={args.reg_normal_from_iter}",
+        f"optimizer.reg_sky_gauss_depth_from_iter={args.reg_sky_gauss_depth_from_iter}",
         f"optimizer.lambda_sky_spec_col={args.lambda_sky_spec_col}",
         f"+test_iterations={args.test_iterations}",
         f"+save_iterations={args.save_iterations}",
