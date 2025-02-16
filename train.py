@@ -79,16 +79,21 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Loss
         Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
-        loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+        rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+        loss = rec_loss
         if cfg.envlight_sh_degree > 2:
             # Sky specular color regularization
             loss_sky_specular = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
-            loss += cfg.optimizer.lambda_sky_spec_col*loss_sky_specular
+            loss_sky_specular = cfg.optimizer.lambda_sky_spec_col*loss_sky_specular
+            loss += loss_sky_specular
 
         # Normal regularization
         if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
-            normal_loss = predicted_normal_loss(render_pkg["normal"]*occluders_mask, render_pkg["normal_ref"]*occluders_mask, render_pkg["alpha"]*occluders_mask)
-            loss += cfg.optimizer.lambda_normal*normal_loss
+            rendered_normal = render_pkg["normal"]*occluders_mask
+            rendered_surf_normal = render_pkg["normal_ref"]*occluders_mask
+            normal_consistency_loss =  (1 - (rendered_normal * rendered_surf_normal).sum(dim=0))[None]
+            normal_consistency_loss = cfg.optimizer.lambda_normal*(normal_consistency_loss).mean()
+            loss += normal_consistency_loss
 
         # Envlight regularization
         if iteration <= cfg.optimizer.envlight_loss_until_iter:
@@ -96,13 +101,13 @@ def training(cfg, testing_iterations, saving_iterations):
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
             with torch.no_grad():
                 normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
-            envl_loss = envlight_loss(envlight_sh.squeeze(), model.envlight.sh_degree, normals)
-            loss += cfg.optimizer.lambda_envlight*envl_loss
+            envl_loss = cfg.optimizer.lambda_envlight*envlight_loss(envlight_sh.squeeze(), model.envlight.sh_degree, normals)
+            loss += envl_loss
 
         # Planar regularization
         if cfg.optimizer.lambda_scale > 0:
-            scale_loss = min_scale_loss(radii, model.gaussians)
-            loss += cfg.optimizer.lambda_scale*scale_loss
+            scale_loss = cfg.optimizer.lambda_scale*min_scale_loss(radii, model.gaussians)
+            loss += scale_loss
 
         # Depth regularization
         if cfg.optimizer.lambda_sky_gauss > 0:
@@ -112,8 +117,8 @@ def training(cfg, testing_iterations, saving_iterations):
                     sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
                     avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
                     avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
-                    depth_loss_sky_gauss = depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
-                    loss += cfg.optimizer.lambda_sky_gauss*depth_loss_sky_gauss
+                    depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss*depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
+                    loss += depth_loss_sky_gauss
                 else:
                     _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"], sky_mask=sky_mask)
                     loss += cfg.optimizer.lambda_sky_gauss*sky_depth_loss_
@@ -121,8 +126,8 @@ def training(cfg, testing_iterations, saving_iterations):
         if iteration > cfg.optimizer.smooth_depth_from_iter: 
             if cfg.optimizer.lambda_depth_smooth > 0:
                 depth_loss_non_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=sky_mask)
-                depth_loss_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=(1-sky_mask))
-                loss += cfg.optimizer.lambda_depth_smooth*(depth_loss_sky + depth_loss_non_sky)
+                depth_loss_sky = cfg.optimizer.lambda_depth_smooth*predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=(1-sky_mask))
+                loss += (depth_loss_sky + depth_loss_non_sky)
 
         loss.backward()
 
@@ -132,7 +137,9 @@ def training(cfg, testing_iterations, saving_iterations):
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 100 == 0:
-                progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
+                progress_bar.set_postfix({"Reconstruction loss": f"{rec_loss:.{7}f}", "Normal loss": f"{normal_consistency_loss:.{5}f}",
+                                          "Depth loss sky gauss": f"{depth_loss_sky_gauss:.{5}f}",
+                                          "Envlight loss": f"{envl_loss:.{5}f}"})
                 progress_bar.update(100)
             if iteration == cfg.optimizer.iterations:
                 progress_bar.close()
@@ -142,7 +149,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
             # Log and save
             losses_extra = {}
-            losses_extra['psnr'] = psnr(image, gt_image).mean()
+            losses_extra['psnr'] = psnr(image*occluders_mask, gt_image*occluders_mask).mean()
             training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations,
                             model, render, (cfg.pipe, background))
