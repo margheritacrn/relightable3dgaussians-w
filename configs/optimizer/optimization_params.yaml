@@ -16,18 +16,18 @@ densification_interval: 500
 opacity_reset_interval: 3000
 densify_from_iter: 500
 densify_until_iter: 15_000
-densify_grad_threshold: 0.0001 # 0.0002
+densify_grad_threshold: 0.0001
 normal_lr: 0.0002
 specular_lr: 0.0002
 roughness_lr: 0.0002
 metalness_lr: 0.0002
 albedo_lr: 0.0002
 sky_radius_lr: 0.0001
-reg_normal_from_iter: 6_000 #15_000 
+reg_normal_from_iter: 15_000
 lambda_normal: 0.05
-smooth_depth_from_iter: 15_000 #15000 #15_000
+smooth_depth_from_iter: 15_000
 lambda_depth_smooth: 0
-reg_sky_gauss_depth_from_iter: 0
+reg_sky_gauss_depth_from_iter: 15_000
 lambda_sky_gauss : 0.05
 reg_sky_depth_from_iter: 0
 lambda_sky_depth: 0.05
@@ -37,7 +37,7 @@ lambda_sky_spec_col: 0.5
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
 lambda_envlight: 100
-lambda_envlight_sh_prior: 0 #0.05
+lambda_envlight_sh_prior: 0
 envlight_prior_until_iter: 0
 # per-image embeddings
 embeddings_lr: 0.0002
