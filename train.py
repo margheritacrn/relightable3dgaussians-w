@@ -81,28 +81,31 @@ def training(cfg, testing_iterations, saving_iterations):
         Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
         rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
         loss = rec_loss
+        logs =  {"Reconstruction loss": f"{rec_loss:.{7}f}"}
         if cfg.envlight_sh_degree > 2:
-            # Sky specular color regularization
+            # Sky color regularization
             loss_sky_specular = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
             loss_sky_specular = cfg.optimizer.lambda_sky_spec_col*loss_sky_specular
             loss += loss_sky_specular
 
         # Normal regularization
-        if cfg.optimizer.lambda_normal > 0 and iteration > cfg.optimizer.reg_normal_from_iter:
+        if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
             rendered_normal = render_pkg["normal"]*occluders_mask
             rendered_surf_normal = render_pkg["normal_ref"]*occluders_mask
             normal_consistency_loss =  (1 - (rendered_normal * rendered_surf_normal).sum(dim=0))[None]
             normal_consistency_loss = cfg.optimizer.lambda_normal*(normal_consistency_loss).mean()
             loss += normal_consistency_loss
+            logs.update({"Normal loss": f"{normal_consistency_loss:.{5}f}"})
 
         # Envlight regularization
-        if iteration <= cfg.optimizer.envlight_loss_until_iter:
+        if cfg.optimizer.lambda_envlight > 0:
             viewing_dirs = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
             with torch.no_grad():
                 normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
             envl_loss = cfg.optimizer.lambda_envlight*envlight_loss(envlight_sh.squeeze(), model.envlight.sh_degree, normals)
             loss += envl_loss
+            logs.update({"Envlight loss": f"{envl_loss:.{5}f}"})
 
         # Planar regularization
         if cfg.optimizer.lambda_scale > 0:
@@ -110,25 +113,29 @@ def training(cfg, testing_iterations, saving_iterations):
             loss += scale_loss
 
         # Depth regularization
-        if iteration > cfg.optimizer.reg_sky_gauss_depth_from_iter:
-            if cfg.optimizer.lambda_sky_gauss > 0:
-                if torch.sum(model.gaussians.get_is_sky) > 0:
-                    sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
-                    gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
-                    sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
-                    avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
-                    avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
-                    depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss*depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
-                    loss += depth_loss_sky_gauss
-                else:
-                    _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
-                    loss += cfg.optimizer.lambda_sky_gauss*sky_depth_loss_
+        if iteration > cfg.optimizer.reg_sky_gauss_depth_from_iter and cfg.optimizer.lambda_sky_gauss > 0:
+            sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
+            gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
+            sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
+            avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
+            avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
+            depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss*depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
+            loss += depth_loss_sky_gauss
+            logs.update({"Depth loss": f"{depth_loss_sky_gauss:.{5}f}"})
 
-        if iteration > cfg.optimizer.smooth_depth_from_iter: 
-            if cfg.optimizer.lambda_depth_smooth > 0:
-                depth_loss_non_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=sky_mask)
-                depth_loss_sky = cfg.optimizer.lambda_depth_smooth*predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=(1-sky_mask))
-                loss += (depth_loss_sky + depth_loss_non_sky)
+        if cfg.envlight_sh_degree == 2 and iteration > cfg.optimizer.reg_sky_depth_from_iter and  cfg.optimizer.lambda_sky_depth > 0:
+            _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
+            sky_depth_loss = cfg.optimizer.lambda_sky_depth*sky_depth_loss_
+            loss += sky_depth_loss
+            logs.update({"Depth loss": f"{sky_depth_loss:.{5}f}"})
+            
+        if iteration > cfg.optimizer.smooth_depth_from_iter and cfg.optimizer.lambda_depth_smooth > 0:
+                depth_loss_smooth_non_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=sky_mask)
+                depth_loss_smooth_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=(1-sky_mask))
+                depth_loss_smooth = cfg.optimizer.lambda_depth_smooth*(depth_loss_smooth_non_sky + depth_loss_smooth_sky)
+                loss += depth_loss_smooth
+                logs.update({"Smoothing depth loss": f"{depth_loss_smooth:.{5}f}"})
+
 
         loss.backward()
 
@@ -138,9 +145,7 @@ def training(cfg, testing_iterations, saving_iterations):
             # Progress bar
             ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
             if iteration % 100 == 0:
-                progress_bar.set_postfix({"Reconstruction loss": f"{rec_loss:.{7}f}", "Normal loss": f"{normal_consistency_loss:.{5}f}",
-                                          "Depth loss sky gauss": f"{depth_loss_sky_gauss:.{5}f}",
-                                          "Envlight loss": f"{envl_loss:.{5}f}"})
+                progress_bar.set_postfix(logs)
                 progress_bar.update(100)
             if iteration == cfg.optimizer.iterations:
                 progress_bar.close()
@@ -212,11 +217,9 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
         for k in losses_extra.keys():
             tb_writer.add_scalar(f'train_loss_patches/{k}_loss', losses_extra[k].item(), iteration)
 
-    # Report test and samples of training set
+    # Report samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        #validation_configs = (#{'name': 'test', 'cameras' : scene.getTestCameras()}, 
-                            #  {'name': 'train', 'cameras' : [scene.getTrainCameras()[idx % len(scene.getTrainCameras())] for idx in range(5, 30, 5)]})
         validation_configs = [{'name': 'train', 'cameras' : [model.scene.getTrainCameras()[idx % len(model.scene.getTrainCameras())] for idx in range(5, 30, 5)]}]
         with torch.no_grad():
             for config in validation_configs:
@@ -325,8 +328,7 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     # Start GUI server, configure and run training
-    # network_gui.init(args.ip, args.port)
-    torch.autograd.set_detect_anomaly(False)#(args.detect_anomaly)
+    torch.autograd.set_detect_anomaly(args.detect_anomaly)
 
     sys.argv = [sys.argv[0]] + cl_args
     main()
