@@ -60,7 +60,7 @@ def normalize_normal_inplace(normal, alpha):
 def get_shaded_colors(envlight: EnvironmentLight, gb_pos: torch.tensor, normal: torch.tensor, albedo: torch.tensor, view_pos: torch.tensor,
                        roughness:torch.tensor=None, metalness:torch.tensor=None, is_sky:bool=False):
     if is_sky:
-        return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
+        return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...].detach(),
                                view_pos[None, None, ...], specular=False)
     else:
         return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],

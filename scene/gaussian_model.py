@@ -120,7 +120,8 @@ class GaussianModel:
         normal_axis_pgsr = get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
         normal_axis, _ = flip_align_view(normal_axis_pgsr, dir_pp_normalized)
         if normalize:
-            normal_axis = torch.nn.functional.normalize(normal_axis, p=2, dim=1)
+            normal_axis = torch.nn.functional.normalize(normal_axis, p=2, 
+                                                        dim=1)
         return normal_axis
     
 
@@ -134,7 +135,7 @@ class GaussianModel:
 
     @property
     def get_albedo(self):
-        return self.material_properties_activation(self._albedo)
+        return torch.where(self._is_sky, torch.ones_like(self.get_xyz), self.material_properties_activation(self._albedo))
 
 
     @property
