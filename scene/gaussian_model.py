@@ -117,8 +117,8 @@ class GaussianModel:
     
     #TODO: remove NORMALIZATION (not needed) , it's here not to edit gaussian_renderer module.
     def get_normal(self, dir_pp_normalized=None, normalize=False):
-        normal_axis_pgsr = get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
-        normal_axis, _ = flip_align_view(normal_axis_pgsr, dir_pp_normalized)
+        normal_axis = get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
+        normal_axis, _ = flip_align_view(normal_axis, dir_pp_normalized)
         if normalize:
             normal_axis = torch.nn.functional.normalize(normal_axis, p=2, 
                                                         dim=1)
