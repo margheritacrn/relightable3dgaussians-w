@@ -135,7 +135,7 @@ class GaussianModel:
 
     @property
     def get_albedo(self):
-        return torch.where(self._is_sky, torch.ones_like(self.get_xyz), self.material_properties_activation(self._albedo))
+        return self.material_properties_activation(self._albedo)
 
 
     @property

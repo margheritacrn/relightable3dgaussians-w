@@ -60,7 +60,7 @@ def normalize_normal_inplace(normal, alpha):
 def get_shaded_colors(envlight: EnvironmentLight, gb_pos: torch.tensor, normal: torch.tensor, albedo: torch.tensor, view_pos: torch.tensor,
                        roughness:torch.tensor=None, metalness:torch.tensor=None, is_sky:bool=False):
     if is_sky:
-        return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...].detach(),
+        return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
                                view_pos[None, None, ...], specular=False)
     else:
         return envlight.shade(gb_pos[None, None, ...], normal[None, None, ...], albedo[None, None, ...],
@@ -174,9 +174,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
     render_extras.update({"depth": depth})
 
     normal = 0.5*normal + 0.5  # range (-1, 1) -> (0, 1)
-    # Get normals (already directed towards the camera) in camera coords
-    # R_w2c = torch.tensor(viewpoint_camera.R).cuda().to(torch.float32)
-    # normal = (R_w2c @ normal.transpose(0, 1)).transpose(0, 1)
     render_extras.update({"normal": normal})
 
     if debug:
@@ -200,9 +197,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
 
         if k == "normal" :
             out_extras[k] = (out_extras[k] - 0.5) * 2. # range (0, 1) -> (-1, 1)
-            # transform back to world space
-            # out_extras[k]  = (out_extras[k].permute(1,2,0) @ R_w2c.T).permute(2,0,1)           
-            # out_extras[k] = F.normalize(out_extras[k], dim = 0)
 
     torch.cuda.empty_cache()
 
@@ -232,9 +226,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, pi
         scales = scales,
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)[0]
-
-    # out_extras["depth"] = out_extras["depth"]/out_extras["alpha"]
-    # out_extras["depth"] = torch.nan_to_num(out_extras["depth"], 0, 0)
 
     # Get surface normal from depth map.
     # out_extras["normal_ref"] = render_surf_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color= bg_color, alpha=out_extras['alpha'][0])
