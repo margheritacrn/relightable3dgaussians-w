@@ -28,6 +28,66 @@ import numpy as np
 from omegaconf import DictConfig
 from scene.relit3DGW_model import Relightable3DGW
 import hydra
+from eval_with_gt_envmaps import process_environment_map_image
+import glob
+
+
+def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model, pipeline, background):
+    render_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "renders_with_gt_envmaps")
+    gts_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "gt")
+
+
+    makedirs(render_path, exist_ok=True)
+    makedirs(gts_path, exist_ok=True)
+    
+    # Envmaps params
+    scale = 10
+    if "st" in source_path:
+        scale = 30
+    threshold = 0.99
+
+    for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        torch.cuda.synchronize()
+
+        view_id = torch.tensor([view.uid], device = 'cuda')
+        if "_DSC" in view.image_name:
+                lighting_condition = view.image_name.split("_DSC")[0]
+        else:
+                lighting_condition = view.image_name.split("_IMG")[0]
+        envmap_folder_path = os.path.join(source_path, "test", "ENV_MAP_CC", lighting_condition)
+        # envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*_rotated.jpg'))[0]
+        envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*.jpg'))
+        envmap_img_path = [fname for fname in envmap_img_path if "SH" not in fname and "rotated" not in fname][0]
+        envlight_sh = process_environment_map_image(envmap_img_path, scale, threshold)
+        envlight_sh = torch.tensor(envlight_sh, dtype=torch.float32, device="cuda")
+        gt = view.original_image.cuda()
+        model.envlight.set_base(envlight_sh)
+        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=True)
+        render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
+
+
+        for k in render_pkg.keys():
+            if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm" or k == "normal_ref" or k == "alpha":
+                continue
+            save_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), k)
+            makedirs(save_path, exist_ok=True)
+            if k == "diffuse_color" or k=="specular_color":
+                render_pkg[k] = torch.clamp(render_pkg[k], 0.0, 1.0)
+            if k == "albedo":
+                render_pkg[k] = torch.clamp(render_pkg[k], 0.0, 1.0)
+            if k == "alpha":
+                render_pkg[k] = apply_depth_colormap(render_pkg["alpha"][0][...,None], min=0., max=1.).permute(2,0,1)
+            if k == "depth":
+                render_pkg[k] = apply_depth_colormap(-render_pkg["depth"][0][...,None]).permute(2,0,1)
+            elif "normal" in k:
+                render_pkg[k] = 0.5 + (0.5*render_pkg[k])
+            torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
+
+        torch.cuda.synchronize()
+
+        gt = gt[0:3, :, :]
+        torchvision.utils.save_image(render_pkg["render"], os.path.join(render_path, view.image_name + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
 
 
 def render_set(model_path, name, iteration, views, model, pipeline, background):
@@ -74,7 +134,6 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             elif "normal" in k:
                 render_pkg[k] = 0.5 + (0.5*render_pkg[k])
             torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
-
     print(f"{name}- rendering illuminations")
     if name == "test":
         model.render_envlights_sh_all(save_path=lighting_path, eval = True, save_sh_coeffs=True)
@@ -82,7 +141,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
         model.render_envlights_sh_all(save_path=lighting_path, eval = False, save_sh_coeffs=True)
 
 
-def render_sets(cfg, skip_train : bool, skip_test : bool):
+def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps: bool):
     with torch.no_grad():
         model = Relightable3DGW(cfg)
 
@@ -93,15 +152,18 @@ def render_sets(cfg, skip_train : bool, skip_test : bool):
              render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background)
 
         if not skip_test:
-             model.optimize_embeddings_test()
-             render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background)
+            if not render_with_gt_envmaps:
+                model.optimize_embeddings_test()
+                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background)
+            else:
+                render_test_with_gt_envmaps(cfg.dataset.source_path,cfg.dataset.model_path,model.load_iteration,model.scene.getTestCameras(), model, cfg.pipe, background)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
     print("Rendering " + cfg.dataset.model_path)
     cfg.dataset.eval = True
-    render_sets(cfg, cfg.skip_train, cfg.skip_test)
+    render_sets(cfg, cfg.skip_train, cfg.skip_test, cfg.render_with_gt_envmaps)
     # All done
     print("\nRendering complete.")
 
@@ -112,6 +174,7 @@ if __name__ == "__main__":
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--skip_train", action="store_true")
     parser.add_argument("--skip_test", action="store_true")
+    parser.add_argument("--render_with_gt_envmaps", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
@@ -122,7 +185,8 @@ if __name__ == "__main__":
         f"dataset.source_path={args.source_path}",
         f"load_iteration={str(args.iteration)}",
         f"+skip_train={args.skip_train}",
-        f"+skip_test={args.skip_test}"
+        f"+skip_test={args.skip_test}",
+        f"+render_with_gt_envmaps={args.render_with_gt_envmaps}"
     ]
 
     # Initialize system state (RNG)
