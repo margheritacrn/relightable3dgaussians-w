@@ -112,7 +112,8 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
                 
                 gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
                 model.envlight.set_base(gt_envmap_sh_rot)
-                render_pkg = render(view, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
+                model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
+                render_pkg = render(view, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False, fix_sky=True)
                 render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
                 # compute metrics
@@ -128,13 +129,16 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
             gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, best_angle[2], best_angle[0], best_angle[1], 'real')
             gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
             model.envlight.set_base(gt_envmap_sh_rot.T)
-            render_pkg = render(view, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
-            rendering = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
-            psnrs.append(mse2psnr(img2mse(rendering, gt_image, mask=mask)))
+            model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
+            render_pkg = render(view, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False, fix_sky=True)
+            rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
+            rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
+            psnrs.append(mse2psnr(img2mse(rendering_masked, gt_image, mask=mask)))
 
             if save_renders:
                 torch.cuda.synchronize()
                 gt_image = gt_image[0:3, :, :]
+                torchvision.utils.save_image(rendering_masked, os.path.join(renders_path, view.image_name + "_masked.png"))
                 torchvision.utils.save_image(rendering, os.path.join(renders_path, view.image_name + ".png"))
                 torchvision.utils.save_image(gt_image*mask, os.path.join(gts_path, view.image_name + ".png"))
             
@@ -228,7 +232,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
                 
                 gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
                 model.envlight.set_base(gt_envmap_sh_rot)
-                render_pkg = render(view, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
+                model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
+                render_pkg = render(view, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False, fix_sky=True)
                 render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
                 # compute metrics
@@ -258,11 +263,14 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
                 
             gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
             model.envlight.set_base(gt_envmap_sh_rot.T)
+            model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
 
-            render_pkg = render(view, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
-            rendering = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
+            render_pkg = render(view, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False, fix_sky=True)
+            rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
+            rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
             torch.cuda.synchronize()
             gt_image = gt_image[0:3, :, :]
+            torchvision.utils.save_image(rendering_masked, os.path.join(renders_path, view.image_name + "_masked.png"))
             torchvision.utils.save_image(rendering, os.path.join(renders_path, view.image_name + ".png"))
             torchvision.utils.save_image(gt_image*mask, os.path.join(gts_path, view.image_name + ".png"))
             

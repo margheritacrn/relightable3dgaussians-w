@@ -55,14 +55,15 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         else:
                 lighting_condition = view.image_name.split("_IMG")[0]
         envmap_folder_path = os.path.join(source_path, "test", "ENV_MAP_CC", lighting_condition)
-        # envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*_rotated.jpg'))[0]
-        envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*.jpg'))
-        envmap_img_path = [fname for fname in envmap_img_path if "SH" not in fname and "rotated" not in fname][0]
+        envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*_rotated.jpg'))[0]
+        # envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*.jpg'))
+        # envmap_img_path = [fname for fname in envmap_img_path if "SH" not in fname and "rotated" not in fname][0]
         envlight_sh = process_environment_map_image(envmap_img_path, scale, threshold)
         envlight_sh = torch.tensor(envlight_sh, dtype=torch.float32, device="cuda")
         gt = view.original_image.cuda()
         model.envlight.set_base(envlight_sh)
-        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=True)
+        model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
+        render_pkg = render(view, model.gaussians, model.envlight, model.skylight, pipeline, background, debug=True)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
 
@@ -90,14 +91,17 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
 
 
-def render_set(model_path, name, iteration, views, model, pipeline, background):
+def render_set(model_path, name, iteration, views, model, pipeline, background, fix_sky):
     render_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "renders")
     gts_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "gt")
     lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_envlights")
+    sky_lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_skylights")
 
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     makedirs(lighting_path, exist_ok=True)
+    makedirs(sky_lighting_path, exist_ok=True)
+
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
         torch.cuda.synchronize()
@@ -110,7 +114,9 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             embedding_gt = model.embeddings(view_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt)
         model.envlight.set_base(envlight_sh)
-        render_pkg = render(view, model.gaussians, model.envlight, pipeline, background, debug=True)
+        skylight_sh = model.skylight_sh_mlp(embedding_gt)
+        model.skylight.set_base(skylight_sh)
+        render_pkg = render(view, model.gaussians, model.envlight, model.skylight, pipeline, background, debug=True, fix_sky=fix_sky)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
         torch.cuda.synchronize()
@@ -134,27 +140,30 @@ def render_set(model_path, name, iteration, views, model, pipeline, background):
             elif "normal" in k:
                 render_pkg[k] = 0.5 + (0.5*render_pkg[k])
             torchvision.utils.save_image(render_pkg[k], os.path.join(save_path, view.image_name + ".png"))
+
     print(f"{name}- rendering illuminations")
     if name == "test":
         model.render_envlights_sh_all(save_path=lighting_path, eval = True, save_sh_coeffs=True)
     else:
         model.render_envlights_sh_all(save_path=lighting_path, eval = False, save_sh_coeffs=True)
+        model.render_skylights_sh_all(save_path=sky_lighting_path, eval = False, save_sh_coeffs=True)
 
 
-def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps: bool):
+def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps: bool=False):
     with torch.no_grad():
         model = Relightable3DGW(cfg)
 
         bg_color = [1,1,1] if cfg.dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        fix_sky = cfg.fix_sky
 
         if not skip_train:
-             render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background)
+             render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background, fix_sky)
 
         if not skip_test:
             if not render_with_gt_envmaps:
                 model.optimize_embeddings_test()
-                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background)
+                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background, fix_sky)
             else:
                 render_test_with_gt_envmaps(cfg.dataset.source_path,cfg.dataset.model_path,model.load_iteration,model.scene.getTestCameras(), model, cfg.pipe, background)
 

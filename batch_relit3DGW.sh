@@ -27,7 +27,7 @@ mkdir -p "${LOCAL_JOB_DIR}/job_results"
 # Check the line in the runsection (python -m resnet_50 train "$@") which runs the training and "$@" has all the parameters and passes them on to the python program
 
 echo "Run full eval on NeRF-OSR dataset"
-apptainer run --nv --bind $DATAPOOL3/datasets/nerfosr_tmp:/mnt/dataset --bind ${LOCAL_JOB_DIR}/job_results:/mnt/output ./relit3DGS-W.sif --output_path /mnt/output --nerfosr /mnt/dataset
+apptainer run  --writable-tmpfs --nv --bind $DATAPOOL3/datasets/nerfosr_tmp:/mnt/dataset --bind ${LOCAL_JOB_DIR}/job_results:/mnt/output ./relit3DGS-W.sif --output_path /mnt/output --nerfosr /mnt/dataset
 
 # These commands copy all results generated in $LOCAL_JOB_DIR back to the submit folder regarding the job id.
 cd "$LOCAL_JOB_DIR"

@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, l2_loss, ssim, predicted_normal_loss, predicted_depth_loss, sky_depth_loss, depth_loss_gaussians,  envlight_loss, envlight_prior_loss, min_scale_loss
+from utils.loss_utils import l1_loss, l2_loss, ssim, predicted_normal_loss, predicted_depth_loss, depth_loss_gaussians, envlight_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -71,28 +71,35 @@ def training(cfg, testing_iterations, saving_iterations):
         envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
         # Get environment lighting object for the current training image
         model.envlight.set_base(envlight_sh)
+        # Repeat for sky light
+        skylight_sh = model.skylight_sh_mlp(embedding_gt_image)
+        model.skylight.set_base(skylight_sh)
 
-        # Render
-        render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, cfg.pipe, background, debug=False)
+        if cfg.fix_sky:
+            render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, cfg.pipe, background, debug=False, fix_sky=True)
+        else:
+            render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        specular_color = render_pkg["specular_color"]
+        sky_color = render_pkg["sky_color"]
 
         # Loss
-        Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
-        rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask))
+        if cfg.fix_sky:
+            rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask*sky_mask))
+        else:
+            Ll1 = l1_loss(image, gt_image, mask=occluders_mask*sky_mask) + l1_loss(sky_color, gt_image, mask=1-sky_mask)
+            Ssim = (1.0 - ssim(image, gt_image, mask=occluders_mask*sky_mask)) + (1.0 - ssim(sky_color, gt_image, mask=1-sky_mask))
+            rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *Ssim
         loss = rec_loss
         logs =  {"Reconstruction loss": f"{rec_loss:.{7}f}"}
-        if cfg.envlight_sh_degree > 2:
-            # Sky color regularization
-            loss_sky_specular = l1_loss(specular_color, torch.zeros_like(gt_image), mask=occluders_mask*(1-sky_mask))
-            loss_sky_specular = cfg.optimizer.lambda_sky_spec_col*loss_sky_specular
-            loss += loss_sky_specular
+
 
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
-            rendered_normal = render_pkg["normal"]*occluders_mask
-            rendered_surf_normal = render_pkg["normal_ref"]*occluders_mask
-            normal_consistency_loss =  (1 - (rendered_normal * rendered_surf_normal).sum(dim=0))[None]
+            rendered_normal = render_pkg["normal"]*occluders_mask*sky_mask
+            rendered_surf_normal = render_pkg["normal_ref"]*occluders_mask*sky_mask
+            normals_prod_mask = ~((rendered_normal == 0).all(dim=0) & (rendered_surf_normal == 0).all(dim=0))
+            normals_prod = rendered_normal*rendered_surf_normal#.detach()
+            normal_consistency_loss =  (1 - (normals_prod[:,normals_prod_mask]).sum(dim=0))[None]
             normal_consistency_loss = cfg.optimizer.lambda_normal*(normal_consistency_loss).mean()
             loss += normal_consistency_loss
             logs.update({"Normal loss": f"{normal_consistency_loss:.{5}f}"})
@@ -103,8 +110,10 @@ def training(cfg, testing_iterations, saving_iterations):
             viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
             with torch.no_grad():
                 normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
-            envl_loss = cfg.optimizer.lambda_envlight*envlight_loss(envlight_sh.squeeze(), model.envlight.sh_degree, normals)
-            loss += envl_loss
+                normals = normals[~model.gaussians.get_is_sky.squeeze()]
+            envl_loss = cfg.optimizer.lambda_envlight*envlight_loss(envlight_sh.squeeze(), model.envlight.get_shdegree, normals)
+            skyl_loss = cfg.optimizer.lambda_envlight*envlight_loss(skylight_sh.squeeze(), model.skylight.get_shdegree, normals)
+            loss += envl_loss + skyl_loss
             logs.update({"Envlight loss": f"{envl_loss:.{5}f}"})
 
         # Planar regularization
@@ -123,18 +132,6 @@ def training(cfg, testing_iterations, saving_iterations):
             loss += depth_loss_sky_gauss
             logs.update({"Depth loss": f"{depth_loss_sky_gauss:.{5}f}"})
 
-        if cfg.envlight_sh_degree == 2 and iteration > cfg.optimizer.reg_sky_depth_from_iter and  cfg.optimizer.lambda_sky_depth > 0:
-            _, sky_depth_loss_ = sky_depth_loss(render_pkg["depth"]*occluders_mask, sky_mask=sky_mask)
-            sky_depth_loss = cfg.optimizer.lambda_sky_depth*sky_depth_loss_
-            loss += sky_depth_loss
-            logs.update({"Depth loss": f"{sky_depth_loss:.{5}f}"})
-            
-        if iteration > cfg.optimizer.smooth_depth_from_iter and cfg.optimizer.lambda_depth_smooth > 0:
-                depth_loss_smooth_non_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=sky_mask)
-                depth_loss_smooth_sky = predicted_depth_loss(render_pkg["depth"]*occluders_mask, mask=(1-sky_mask))
-                depth_loss_smooth = cfg.optimizer.lambda_depth_smooth*(depth_loss_smooth_non_sky + depth_loss_smooth_sky)
-                loss += depth_loss_smooth
-                logs.update({"Smoothing depth loss": f"{depth_loss_smooth:.{5}f}"})
 
 
         loss.backward()
@@ -158,7 +155,7 @@ def training(cfg, testing_iterations, saving_iterations):
             losses_extra['psnr'] = psnr(image*occluders_mask, gt_image*occluders_mask).mean()
             training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations,
-                            model, render, (cfg.pipe, background))
+                            model, render, {"pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky})
             if iteration in saving_iterations or iteration == cfg.optimizer.iterations:
                 print(f" ITER: {iteration} saving model")
                 model.save(iteration)
@@ -175,7 +172,7 @@ def training(cfg, testing_iterations, saving_iterations):
                     model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
                     grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optimizer.densify_grad_threshold)
 
-                if iteration % cfg.optimizer.opacity_reset_interval == 0 or (cfg.dataset.white_background and iteration == cfg.optimizer.densify_from_iter):
+                if iteration % cfg.optimizer.opacity_reset_interval == 0 or (iteration == cfg.optimizer.densify_from_iter):
                     model.gaussians.reset_opacity()
 
             # Optimizer step
@@ -224,38 +221,34 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
         with torch.no_grad():
             for config in validation_configs:
                 if config['cameras'] and len(config['cameras']) > 0:
-                    images = torch.tensor([], device="cuda")
-                    gts = torch.tensor([], device="cuda")
+                    images = []
+                    gts = []
                     for idx, viewpoint in enumerate(config['cameras']):
                         gt_image = viewpoint.original_image.cuda()
-                        if idx == 0:
-                            h = gt_image.shape[0]
-                            w = gt_image.shape[2]
-                            resize_transform = transforms.Resize((h, w))
                         viewpoint_cam_id = torch.tensor([viewpoint.uid], device = 'cuda')
                         embedding_gt_image = model.embeddings(viewpoint_cam_id)
                         envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
+                        skylight_sh = model.skylight_sh_mlp(embedding_gt_image)
                         model.envlight.set_base(envlight_sh)
-                        render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, *renderArgs)
+                        model.skylight.set_base(skylight_sh)
+                        render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, model.skylight, renderArgs["pipe"],
+                                                renderArgs["background"], debug=renderArgs["debug"], fix_sky=renderArgs["fix_sky"])
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                        resize_image = transforms.ToPILImage()(image)
-                        resized_image = resize_transform(resize_image)
-                        final_image = transforms.ToTensor()(resized_image).cuda()
-                        images = torch.cat((images, final_image.unsqueeze(0)), dim=0)
+                        images.append(image)
                         gt_image = torch.clamp(gt_image, 0.0, 1.0)
-                        resize_gt_image = transforms.ToPILImage()(gt_image)
-                        resized_gt_image = resize_transform(resize_gt_image)
-                        final_gt_image = transforms.ToTensor()(resized_gt_image).cuda()
-                        gts = torch.cat((gts, final_gt_image.unsqueeze(0)), dim=0)
+                        gts.append(gt_image)
+                        reconstructed_envlight = model.envlight.render_sh().cuda().permute(2,0,1)
+                        reconstructed_skylight = model.skylight.render_sh().cuda().permute(2,0,1)
                         if tb_writer and (idx < 10):
                             tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
-                            if iteration == testing_iterations[0]:
-                                tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/reconstructed_envlight".format(viewpoint.image_name), reconstructed_envlight[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/reconstructed_skylight".format(viewpoint.image_name), reconstructed_skylight[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
-                                if "diffuse" in k:
-                                    image_k = render_pkg[k]
                                 if render_pkg[k].dim()<3 or k=="render" :
                                     continue
+                                if "diffuse" in k:
+                                    image_k = render_pkg[k]
                                 if k == "depth":
                                     image_k = apply_depth_colormap(-render_pkg[k][0][...,None])
                                     image_k = image_k.permute(2,0,1)
@@ -268,12 +261,13 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                                     image_k = torch.clamp(render_pkg[k], 0.0, 1.0)
                                 tb_writer.add_images(config['name'] + "_view_{}/{}".format(viewpoint.image_name, k), image_k[None], global_step=iteration)
 
-                    l1_test = l1_loss(images, gts)
-                    psnr_test = psnr(images, gts).mean()  
-                    print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+                    l1_losses = [l1_loss(image, gt) for image, gt in zip(images,gts)]
+                    l1_train = torch.tensor(l1_losses).mean() 
+                    psnrs = [psnr(image, gt) for image, gt in zip(images,gts)]
+                    psnr_train = torch.mean(torch.stack(psnrs))
                     if tb_writer:
-                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
-                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
+                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_train, iteration)
+                        tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_train, iteration)
 
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", model.gaussians.get_opacity, iteration)
@@ -304,22 +298,22 @@ if __name__ == "__main__":
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--num_sky_points", type=int, default=50_000)
     parser.add_argument("--lambda_sky_gauss", type=float, default=0.05)
     parser.add_argument("--reg_normal_from_iter", type=float, default=15_000)
     parser.add_argument("--reg_sky_gauss_depth_from_iter", type=float, default=0)
-    parser.add_argument("--lambda_sky_spec_col", type=float, default=0.5)
+    parser.add_argument("--lambda_sky_col", type=float, default=0.5)
+    parser.add_argument("--fix_sky", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
-        f"num_sky_points={args.num_sky_points}",
+        f"fix_sky={str(args.fix_sky)}",
         f"dataset.eval={str(args.eval)}",
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
         f"optimizer.lambda_sky_gauss={args.lambda_sky_gauss}",
         f"optimizer.reg_normal_from_iter={args.reg_normal_from_iter}",
         f"optimizer.reg_sky_gauss_depth_from_iter={args.reg_sky_gauss_depth_from_iter}",
-        f"optimizer.lambda_sky_spec_col={args.lambda_sky_spec_col}",
+        f"optimizer.lambda_sky_col={args.lambda_sky_col}",
         f"+test_iterations={args.test_iterations}",
         f"+save_iterations={args.save_iterations}",
     ]
@@ -332,6 +326,4 @@ if __name__ == "__main__":
 
     sys.argv = [sys.argv[0]] + cl_args
     main()
-
-
 

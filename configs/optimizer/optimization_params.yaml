@@ -31,7 +31,7 @@ lambda_sky_gauss : 0.05
 reg_sky_depth_from_iter: 0
 lambda_sky_depth: 0.05
 lambda_scale: 100.0
-lambda_sky_spec_col: 0.5
+lambda_sky_col: 0.5
 # environment light 
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
