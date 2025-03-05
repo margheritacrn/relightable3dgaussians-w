@@ -213,7 +213,7 @@ class GaussianModel:
         mean = self._xyz.mean(0)[None]
         sky_distance = torch.quantile(torch.linalg.norm(self._xyz - mean, 2, -1), 0.99)
         scene_center = torch.tensor(get_scene_center(cameras), dtype=torch.float32, device="cuda").T
-        num_sky_points = int(5000*sky_distance.item())
+        num_sky_points = int(2500*sky_distance.item())
         points = sample_points_on_unit_hemisphere(num_sky_points)
         points = points.to("cuda")
         points = points * sky_distance
