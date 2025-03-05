@@ -63,7 +63,7 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         gt = view.original_image.cuda()
         model.envlight.set_base(envlight_sh)
         model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
-        render_pkg = render(view, model.gaussians, model.envlight, model.skylight, pipeline, background, debug=True)
+        render_pkg = render(view, model.gaussians, model.envlight, model.skylight, pipeline, background, debug=True, fix_sky=True)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
 

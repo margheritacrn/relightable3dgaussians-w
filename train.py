@@ -265,6 +265,8 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                     l1_train = torch.tensor(l1_losses).mean() 
                     psnrs = [psnr(image, gt) for image, gt in zip(images,gts)]
                     psnr_train = torch.mean(torch.stack(psnrs))
+
+                    print("\n[ITER {}] Evaluating train {}: L1 {} PSNR {}".format(iteration, config['name'], l1_train, psnr_train))
                     if tb_writer:
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_train, iteration)
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_train, iteration)

@@ -166,8 +166,10 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         if eval_all:
             out_dir_name = "eval_gt_envmap_all"
         renders_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders")
+        renders_unmasked_path = os.path.join(cfg.dataset.model_path, "eval_gt_envmap", "test", "iteration_{}".format(model.load_iteration), "renders_unmasked")
         gts_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "gt")
         makedirs(renders_path, exist_ok=True)
+        makedirs(renders_unmasked_path, exist_ok=True)
         makedirs(gts_path, exist_ok=True)
 
         ssims, psnrs, mses, maes = [], [], [], []
@@ -200,17 +202,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
             gt_image = view.original_image.cuda()
 
             # Get eval mask
-            if eval_all and view.image_name not in config_test.keys():
+            if eval_all and view.image_name not in config_test_names:
                 mask_path = os.path.join(cfg.dataset.source_path, "test", "cityscapes_mask", "binary_masks", view.image_name + ".png")
-                """
-                occluders_mask_path = os.path.join(cfg.dataset.source_path, "masks", view.image_name + ".png")
-                occluders_mask = cv2.imread(occluders_mask_path, cv2.IMREAD_GRAYSCALE)
-                occluders_mask = cv2.resize(occluders_mask, (gt_image.shape[2], gt_image.shape[1]))
-                sky_mask_path = os.path.join(cfg.dataset.source_path, "sky_masks", view.image_name + "_mask.png")
-                sky_mask = cv2.imread(sky_mask_path, cv2.IMREAD_GRAYSCALE)
-                sky_mask = cv2.resize(sky_mask, (gt_image.shape[2], gt_image.shape[1]))
-                mask = cv2.bitwise_and((sky_mask).astype(np.uint8), (occluders_mask).astype(np.uint8))
-                """
             mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
             mask = cv2.resize(mask, (gt_image.shape[2], gt_image.shape[1]))
             kernel = np.ones((5, 5), np.uint8)
@@ -222,7 +215,9 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
             all_psnrs = []
 
             n = 51
-            sun_angles_prepare_list = torch.linspace(sun_angle_range[0], sun_angle_range[1], n)  
+            sun_angles_prepare_list = torch.linspace(sun_angle_range[0], sun_angle_range[1], n)
+            if eval_all:
+                sun_angles_prepare_list = torch.linspace(0, 2*np.pi, n)
             sun_angles = [torch.tensor([angle,0, 0]) for angle in sun_angles_prepare_list] #rotate only around y
 
             for angle in tqdm(sun_angles):
@@ -271,7 +266,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
             torch.cuda.synchronize()
             gt_image = gt_image[0:3, :, :]
             torchvision.utils.save_image(rendering_masked, os.path.join(renders_path, view.image_name + "_masked.png"))
-            torchvision.utils.save_image(rendering, os.path.join(renders_path, view.image_name + ".png"))
+            torchvision.utils.save_image(rendering, os.path.join(renders_unmasked_path, view.image_name + ".png"))
             torchvision.utils.save_image(gt_image*mask, os.path.join(gts_path, view.image_name + ".png"))
             
             used_angles.append(best_angle)
