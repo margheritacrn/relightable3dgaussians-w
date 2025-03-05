@@ -293,7 +293,7 @@ def pinverse(A: torch.tensor):
 
 
 def cartesian_to_polar_coord(xyz: torch.tensor, center: torch.tensor=torch.zeros(3, dtype=torch.float32, device="cuda"), radius: float=1.0):
-        theta = torch.acos(torch.clamp((-xyz[...,1]-center[1])/radius, -1, 1)).unsqueeze(1)
+        theta = torch.acos(torch.clamp((-xyz[...,1]+center[1])/radius, -1, 1)).unsqueeze(1)
         phi = torch.atan2(xyz[..., 0] - center[0], xyz[..., 2] - center[2]).unsqueeze(1)
         angles = torch.cat((theta, phi), dim=1)
         return angles
