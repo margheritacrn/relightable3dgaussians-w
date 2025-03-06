@@ -59,7 +59,7 @@ class EnvironmentLight(torch.nn.Module):
         assert base.squeeze().shape[0] == self.sh_dim, f"The number of SH coefficients must be {self.sh_dim}"
         self.base = base.squeeze()
 
-    def get_diffuse_irradiance(self, indirect_diffuse_light: torch.tensor, normal: torch.tensor)-> torch.tensor:
+    def get_diffuse_irradiance(self, normal: torch.tensor)-> torch.tensor:
         """
         The function computes the diffuse irradiance according to section 3.2 of "An efficient representaiton for Irradiance Environment Maps"
         by Ramamoorthi and Pat Hanrahan, https://cseweb.ucsd.edu/~ravir/papers/envmap/envmap.pdf. The implementation
@@ -76,16 +76,16 @@ class EnvironmentLight(torch.nn.Module):
         x, y, z = normal[..., 0, None], normal[..., 1, None], normal[..., 2, None]
 
         diffuse_irradiance = (
-            self.C1 * (self.base[8,:] + indirect_diffuse_light[8,:]) * (x ** 2 - y ** 2) +
-            self.C3 * (self.base[6,:] + indirect_diffuse_light[6,:]) * (z ** 2) +
-            self.C4 * (self.base[0,:] +  indirect_diffuse_light[0,:]) -
-            self.C5 * (self.base[6,:] + indirect_diffuse_light[6,:]) +
-            2 * self.C1 * (self.base[4,:] + indirect_diffuse_light[4,:])* x * y +
-            2 * self.C1 * (self.base[7,:] + indirect_diffuse_light[7,:]) * x * z +
-            2 * self.C1 * (self.base[5,:] + indirect_diffuse_light[5,:]) * y * z +
-            2 * self.C2 * (self.base[3,:] + indirect_diffuse_light[3,:])* x +
-            2 * self.C2 * (self.base[1,:] + indirect_diffuse_light[1,:]) * y +
-            2 * self.C2 * (self.base[2,:] + indirect_diffuse_light[2,:]) * z
+            self.C1 * self.base[8,:] * (x ** 2 - y ** 2) +
+            self.C3 * self.base[6,:] * (z ** 2) +
+            self.C4 * self.base[0,:] -
+            self.C5 * self.base[6,:] +
+            2 * self.C1 * self.base[4,:]* x * y +
+            2 * self.C1 * self.base[7,:] * x * z +
+            2 * self.C1 * self.base[5,:] * y * z +
+            2 * self.C2 * self.base[3,:]* x +
+            2 * self.C2 * self.base[1,:] * y +
+            2 * self.C2 * self.base[2,:] * z
         )
         return diffuse_irradiance
 
@@ -123,7 +123,7 @@ class EnvironmentLight(torch.nn.Module):
         return util.gamma_correction(illu_hdr) # linear --> sRGB
 
 
-    def shade(self, indirect_diffuse_light: torch.tensor, gb_pos:torch.tensor, gb_normal:torch.tensor, albedo:torch.tensor, view_pos:torch.tensor,
+    def shade(self, gb_pos:torch.tensor, gb_normal:torch.tensor, albedo:torch.tensor, view_pos:torch.tensor,
               kr:torch.tensor=None, km:torch.tensor=None, specular:bool=True)->Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
        The function, based on NVDIFFREC implementation https://github.com/NVlabs/nvdiffrecmc,
@@ -145,9 +145,9 @@ class EnvironmentLight(torch.nn.Module):
 
         nrmvec = gb_normal
 
-        diffuse_irradiance_hdr = torch.nn.functional.relu(self.get_diffuse_irradiance(indirect_diffuse_light, nrmvec.squeeze()))
+        diffuse_irradiance_hdr = torch.nn.functional.relu(self.get_diffuse_irradiance(nrmvec.squeeze()))
         # Compute diffuse color
-        diffuse_rgb_hdr = albedo*diffuse_irradiance_hdr
+        diffuse_rgb_hdr = albedo * diffuse_irradiance_hdr
         # Gamma correction: linear --> sRGB
         diffuse_rgb_ldr = util.gamma_correction(diffuse_rgb_hdr)
         extras = {"diffuse": diffuse_rgb_ldr}
@@ -182,7 +182,7 @@ class EnvironmentLight(torch.nn.Module):
             if km is None:
                 shaded_rgb = diffuse_rgb_hdr + specular_rgb_hdr
             else:
-                shaded_rgb = (1-km)*diffuse_rgb_hdr + specular_rgb_hdr
+                shaded_rgb = (1-km) * diffuse_rgb_hdr + specular_rgb_hdr
             # Gamma correction: linear --> sRGB
             shaded_rgb_ldr = util.gamma_correction(shaded_rgb) 
             specular_rgb_ldr = util.gamma_correction(specular_rgb_hdr)
