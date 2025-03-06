@@ -166,7 +166,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         if eval_all:
             out_dir_name = "eval_gt_envmap_all"
         renders_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders")
-        renders_unmasked_path = os.path.join(cfg.dataset.model_path, "eval_gt_envmap", "test", "iteration_{}".format(model.load_iteration), "renders_unmasked")
+        renders_unmasked_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_unmasked")
         gts_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "gt")
         makedirs(renders_path, exist_ok=True)
         makedirs(renders_unmasked_path, exist_ok=True)
@@ -251,8 +251,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
             np.save(os.path.join(renders_path, "best_envmap" + view.image_name+".npy"), gt_envmap_sh_rot)
 
             render_best_angle_envmap = sh_utility.sh_render(gt_envmap_sh_rot.T, width = 360)
-            render_best_angle_envmap = (render_best_angle_envmap - render_best_angle_envmap.min()) / (render_best_angle_envmap.max() - render_best_angle_envmap.min()) * 255
-            render_best_angle_envmap = render_best_angle_envmap.astype(np.uint8)
+            render_best_angle_envmap = torch.tensor(render_best_angle_envmap**(1/ 2.2))
+            render_best_angle_envmap =  np.array(render_best_angle_envmap*255).clip(0,255).astype(np.uint8)
             render_best_angle_envmap = Image.fromarray(render_best_angle_envmap)
             render_best_angle_envmap.save(os.path.join(renders_path, "best_angle_rot_envmap"+view.image_name+".jpg"))
                 
