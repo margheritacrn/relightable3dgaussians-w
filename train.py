@@ -303,7 +303,7 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_sky_gauss", type=float, default=0.05)
     parser.add_argument("--reg_normal_from_iter", type=float, default=15_000)
     parser.add_argument("--reg_sky_gauss_depth_from_iter", type=float, default=0)
-    parser.add_argument("--lambda_sky_col", type=float, default=0.5)
+    parser.add_argument("--lambda_envlight", type=float, default=100)
     parser.add_argument("--fix_sky", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
@@ -315,7 +315,7 @@ if __name__ == "__main__":
         f"optimizer.lambda_sky_gauss={args.lambda_sky_gauss}",
         f"optimizer.reg_normal_from_iter={args.reg_normal_from_iter}",
         f"optimizer.reg_sky_gauss_depth_from_iter={args.reg_sky_gauss_depth_from_iter}",
-        f"optimizer.lambda_sky_col={args.lambda_sky_col}",
+        f"optimizer.lambda_envlight={args.lambda_envlight}",
         f"+test_iterations={args.test_iterations}",
         f"+save_iterations={args.save_iterations}",
     ]
