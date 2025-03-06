@@ -138,7 +138,7 @@ def gauss_weierstrass_kernel(roughness, sh_degree):
     """
     l_idxs = torch.arange(sh_degree + 1, dtype=torch.float32).view(1, -1).cuda()
     gw_kernel_sh = torch.zeros((roughness.shape[0],(sh_degree + 1)**2)).cuda()
-    gw_kernel_sh_l = torch.exp(-l_idxs*(l_idxs+1)*(roughness)).cuda()
+    gw_kernel_sh_l = torch.exp(-l_idxs*(l_idxs+1)*(0.3 * roughness)).cuda()
     for l in range(l_idxs.shape[1]):
         if l == 0:
             gw_kernel_sh[..., l] = gw_kernel_sh_l[..., l]

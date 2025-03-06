@@ -166,7 +166,7 @@ def flip_align_view(normal, viewdir):
     dotprod = torch.sum(
         normal * -viewdir, dim=-1, keepdims=True) # (N, 1)
     non_flip = dotprod >= 0 # (N, 1)
-    normal_flipped = normal*torch.where(non_flip, 1, -1) # (N, 3)
+    normal_flipped = normal * torch.where(non_flip, 1, -1) # (N, 3)
     return normal_flipped, non_flip
 
 
@@ -197,13 +197,13 @@ def rand_hemisphere_dir(N: torch.Tensor, n: torch.Tensor):
     normals = n.repeat(N, 1 , 1).transpose(0,1)
     phi = 2*np.pi*rand[...,1] # phi in [0, 2pi), shape N x n.shape[0]
     d = torch.zeros_like(normals)
-    d[..., 0] = torch.cos(phi)*torch.sqrt(rand[...,0])
-    d[..., 1] = torch.sin(phi)*torch.sqrt(rand[...,0])
+    d[..., 0] = torch.cos(phi) * torch.sqrt(rand[...,0])
+    d[..., 1] = torch.sin(phi) * torch.sqrt(rand[...,0])
     d[...,2] = torch.sqrt(1- torch.linalg.vector_norm(d, dim = -1)**2)
     # orient points around corresponding normal vectorſ
     tangent = torch.nn.functional.normalize(rand, dim=-1)
     bitangent = torch.linalg.cross(tangent, normals) # cross product along dim=-1
-    d = tangent*d[...,0].unsqueeze(-1) + bitangent*d[...,1].unsqueeze(-1) + normals*d[...,2].unsqueeze(-1) 
+    d = tangent * d[...,0].unsqueeze(-1) + bitangent * d[...,1].unsqueeze(-1) + normals * d[...,2].unsqueeze(-1) 
 
     return d
 
@@ -231,9 +231,9 @@ def sample_points_on_unit_hemisphere(num_points, *, dtype=None, xnp=torch):
         dtype = xnp.float32
     # Sample points on a portion of the unit hemisphere (COLMAP coordinates system)
     torch.manual_seed(0)
-    y = - 0.5*xnp.rand(num_points)
+    y = - 0.5 * xnp.rand(num_points)
     theta = torch.acos(y)
-    phi = xnp.pi*(1/2)*xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/4, pi/4]
+    phi = xnp.pi*(1/2) * xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/4, pi/4]
     # Spherical to cartesian
     x = xnp.sin(phi) * xnp.sin(theta)
     z = xnp.sin(theta) * xnp.cos(phi)
@@ -293,7 +293,7 @@ def pinverse(A: torch.tensor):
 
 
 def cartesian_to_polar_coord(xyz: torch.tensor, center: torch.tensor=torch.zeros(3, dtype=torch.float32, device="cuda"), radius: float=1.0):
-        theta = torch.acos(torch.clamp((-xyz[...,1]+center[1])/radius, -1, 1)).unsqueeze(1)
+        theta = torch.acos(torch.clamp((-xyz[...,1] + center[1])/radius, -1, 1)).unsqueeze(1)
         phi = torch.atan2(xyz[..., 0] - center[0], xyz[..., 2] - center[2]).unsqueeze(1)
         angles = torch.cat((theta, phi), dim=1)
         return angles
