@@ -115,7 +115,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background, 
             embedding_gt = model.embeddings(view_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt)
         model.envlight.set_base(envlight_sh)
-        sky_sh = model.skylight_sh_mlp(embedding_gt)
+        sky_sh = model.sky_sh_mlp(embedding_gt)
         shadows = model.get_shadows(envlight_sh)
         render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, shadows, pipeline, background, debug=True, fix_sky=fix_sky)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
