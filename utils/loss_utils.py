@@ -26,6 +26,8 @@ import torch.nn.functional as F
 
 def l1_loss(network_output, gt, mask=None):
     if mask is not None:
+        if torch.sum(mask) == 0:
+            return 0
         assert mask.shape[0] == network_output.shape[0], "the mask must be expanded as the input images"
         num_pixels = torch.sum(mask == 1)
         return (torch.abs((network_output*mask - gt*mask)).sum())/num_pixels
@@ -46,6 +48,8 @@ def create_window(window_size, channel):
     return window
 
 def ssim(img1_, img2_, window_size=11, size_average=True, mask=None):
+    if mask is not None and torch.sum(mask) == 0:
+        return 0
     img1 = img1_.squeeze(0)
     img2 = img2_.squeeze(0)
     channel = img1.size(-3)
@@ -221,16 +225,16 @@ def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tens
     return envlight_loss
 
 
-def envlight_loss_without_normals(envlight: EnvironmentLight, N_samples: int=10):
+def sh_loss(sh: torch.tensor, sh_degree, N_samples: int=10):
 
-    viewing_dirs_unnorm = torch.empty(N_samples, 3, device=envlight.base.device).uniform_(-1,1)
+    viewing_dirs_unnorm = torch.empty(N_samples, 3, device=sh.device).uniform_(-1,1)
     viewing_dirs_norm = viewing_dirs_unnorm/viewing_dirs_unnorm.norm(dim=1, keepdim=True)
 
-    light = eval_sh(envlight.sh_degree, envlight.base.transpose(0,1), viewing_dirs_norm)
+    sh2rgb = eval_sh(sh_degree, sh.transpose(0,1), viewing_dirs_norm)
 
-    envlight_loss = penalize_outside_range(light.view(-1), 0.0, torch.inf)
+    sh_loss = penalize_outside_range(sh2rgb.view(-1), 0.0, 1)
 
-    return envlight_loss
+    return sh_loss
 
 
 def penalize_outside_range(tensor, lower_bound=0.0, upper_bound=1.0):
