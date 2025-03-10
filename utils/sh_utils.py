@@ -26,16 +26,18 @@ import numpy as np
 import cv2
 import imageio.v3 as im
 import math
+from utils.sh_additional_utils import sh_render
 
-# coefficients to evaluate Y_lm(phi,theta) using cartesian coordinates, with l>=0 and -l<=m<=l (l in N, m in Z)
+
+# Coefficients to evaluate Y_lm(phi,theta) using cartesian coordinates, with l>=0 and -l<=m<=l (l in N, m in Z)
 
 C0 = 0.28209479177387814   # Y_00
 C1 = 0.4886025119029199    # Y_11, Y_10 Y_1-1
 C2 = [
-    1.0925484305920792, # Y_21,- Y_2-1, Y_2-2
-    -1.0925484305920792,
+    1.0925484305920792, #  Y_2-2, 
+    -1.0925484305920792, # Y_2-1
     0.31539156525252005, # Y_20
-    -1.0925484305920792,
+    -1.0925484305920792, # Y_21
     0.5462742152960396   # Y_22
 ]
 C3 = [
@@ -57,7 +59,22 @@ C4 = [
     0.47308734787878004,
     -1.7701307697799304,
     0.6258357354491761,
-]   
+]
+
+C5 = [
+    -0.6563820568401703, 
+    8.302649259524165,
+    -0.48923829943525043, 
+    4.793536784973324,
+    -0.452946651195697,
+    0.1169503224534236,
+    -0.452946651195697,
+    2.3967683924866,
+    -0.48923829943525043,
+    2.075662314881041, 
+    -0.6563820568401701
+]
+
 
 
 def eval_sh(deg, sh, dirs):
@@ -66,14 +83,15 @@ def eval_sh(deg, sh, dirs):
     using hardcoded SH polynomials.
     Works with torch/np/jnp.
     ... Can be 0 or more batch dimensions.
+    The hardcoded polynomials for deg 5 refer to https://www.ppsloan.org/publications/StupidSH36.pdf.
     Args:
-        deg: int SH deg. Currently, 0-3 supported
+        deg: int SH deg. Currently, 0-5 supported
         sh: jnp.ndarray SH coeffs [..., C, (deg + 1) ** 2]
         dirs: jnp.ndarray unit directions [..., 3]
     Returns:
         [..., C]
     """
-    assert deg <= 4 and deg >= 0
+    assert deg <= 5 and deg >= 0
     coeff = (deg + 1) ** 2
     assert sh.shape[-1] >= coeff
 
@@ -81,9 +99,9 @@ def eval_sh(deg, sh, dirs):
     if deg > 0:
         x, y, z = dirs[..., 0:1], dirs[..., 1:2], dirs[..., 2:3]
         result = (result -
-                C1 * y * sh[..., 1] +
-                C1 * z * sh[..., 2] -
-                C1 * x * sh[..., 3])
+                C1 * y * sh[..., 1] +  # -1, 1
+                C1 * z * sh[..., 2] -   # 0,1
+                C1 * x * sh[..., 3]) # 1, 1
 
         if deg > 1:
             xx, yy, zz = x * x, y * y, z * z
@@ -115,6 +133,20 @@ def eval_sh(deg, sh, dirs):
                             C4[6] * (xx - yy) * (7 * zz - 1) * sh[..., 22] +
                             C4[7] * xz * (xx - 3 * yy) * sh[..., 23] +
                             C4[8] * (xx * (xx - 3 * yy) - yy * (3 * xx - yy)) * sh[..., 24])
+
+                if deg > 4:
+                        result = (result +
+                                C5[0] * (5 * xx * xx - 10 * yy * xx + yy * yy) * sh[..., 25] +
+                                C5[1] * xy * z * (xx - yy) * sh[..., 26] +
+                                C5[2] * y * (9 * zz - 1) * (3 * xx - yy) * sh[..., 27] +
+                                C5[3] * xy * z * (3 * zz - 1) * sh[..., 28] +
+                                C5[4] * y * (zz * (-14 + 21 * zz) + 1) * sh[..., 29] +
+                                C5[5] * z * (zz * (63 * zz - 70) + 15) * sh[..., 30] +
+                                C5[6] * x * (zz * (21 * zz - 14) + 15) * sh[..., 31] +
+                                C5[7] * z * (xx - yy) * (-1 + 3 * zz) * sh[..., 32] +
+                                C5[8] * x * (xx - 3 * yy) * (-1 + 9 * zz) * sh[..., 33] +
+                                C5[9] * z * (xx * (xx - 6 * yy) + yy * yy) * sh[..., 34] +
+                                C5[10] * x * (xx * (xx - 10 * yy) + 5 * yy * yy) * sh[..., 35])
     return result
 
 
@@ -128,13 +160,13 @@ def SH2RGB(sh):
 
 def gauss_weierstrass_kernel(roughness, sh_degree):
     """The function computes the sh_dim coefficients of
-    Gauss Weierstrass kernel for smoothing in SH domain. In Euclidean space 
-    the kernel corresponds to a Gaussian kernel of std proportional to the roughness input value.
+    Gauss Weierstrass kernel for smoothing in SH domain. The smoothing 
+    strenght is proportional to the roughness.
     Args:
-        roughness (torch.tensor): [..., 1]
+        roughness (torch.tensor): tensor of shape [..., 1] with roughness values
         sh_degree (int): degree of the spherical harmonics coefficients.
     Returns:
-        SH coefficients of Gaussian blur kernel of sigma = sqrt(roughness)
+        SH coefficients of Gaussian smoothing kernel of windowing strength proportional to the roughness
     """
     l_idxs = torch.arange(sh_degree + 1, dtype=torch.float32).view(1, -1).cuda()
     gw_kernel_sh = torch.zeros((roughness.shape[0],(sh_degree + 1)**2)).cuda()
@@ -147,5 +179,18 @@ def gauss_weierstrass_kernel(roughness, sh_degree):
 
     return gw_kernel_sh
 
+
+def render_sh_map(sh, width: int = 600)->torch.tensor:
+    """Render sh map given sh coefficients
+        Args:
+        sh (torch.tensor, numpy.ndarray): sh coefficients of shape (sh_deg + 1)**2 x 3
+        Returns:
+        rendered sh map """
+    if isinstance(sh, torch.Tensor):     
+        rendered_sh = torch.tensor(sh_render(sh.cpu().numpy(), width = width))
+    else:
+        rendered_sh = torch.tensor(sh_render(sh, width = width))
+    rendered_sh = torch.clamp(rendered_sh, 0, 1)
+    return rendered_sh
 
 
