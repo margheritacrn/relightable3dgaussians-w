@@ -26,7 +26,7 @@ parser.add_argument("--lambda_envlight", type=float, default=100)
 args, _ = parser.parse_known_args()
 
 if not args.skip_training:
-    common_args = " --quiet --save_iterations 15_000 30_000 50_000 "
+    common_args = " --quiet --save_iterations 15_000 20_000 30_000 40_000 --test_iterations 3_000 5_000 10_000 15_000 20_000 30_000 40_000 "
     optimizer_args = f" --lambda_sky_gauss {str(args.lambda_sky_gauss)} --lambda_envlight {str(args.lambda_envlight)} --reg_sky_gauss_depth_from_iter {str(args.reg_sky_gauss_depth_from_iter)} --reg_normal_from_iter {str(args.reg_normal_from_iter)} "
     for scene in nerfosr_scenes:
         source = args.nerfosr + "/" + scene
@@ -40,7 +40,7 @@ if not args.skip_rendering:
     common_args = " --quiet "
     for scene, source in zip(nerfosr_scenes, all_sources):
         # os.system("python render.py --iteration 30000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
-        os.system("python render.py --iteration 50000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
+        os.system("python render.py --iteration 40_000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
 
 # Reconstruction eval
 if not args.skip_metrics:
@@ -57,6 +57,6 @@ for scene in nerfosr_scenes:
     scene_path = args.output_path + "/" + scene
     source = args.nerfosr + "/" + scene
     test_config_path = "./example_test_configs/" + scene
-    iterations = ["50_000"]
+    iterations = ["40_000"]
     for iter in iterations:
         os.system("python eval_with_gt_envmaps.py" + " --model_path " + scene_path + " --source_path " + source + " --test_config " + test_config_path + " --iteration " + iter)
