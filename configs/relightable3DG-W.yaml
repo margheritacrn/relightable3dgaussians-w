@@ -1,6 +1,6 @@
 # model parameters
 envlight_sh_degree: 4
-skylight_sh_degree: 2
+sky_sh_degree: 2
 init_embeddings: True
 init_sh_mlp: True
 embeddings_dim: 32
