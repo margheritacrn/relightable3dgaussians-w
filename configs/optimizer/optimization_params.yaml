@@ -1,6 +1,6 @@
 # optimizer parameters
 # gaussians
-iterations:  40_000
+iterations: 40_000
 position_lr_init: 0.00016
 position_lr_final: 0.0000016
 position_lr_delay_mult: 0.01
