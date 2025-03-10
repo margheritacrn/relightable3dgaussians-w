@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch
 from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, l2_loss, ssim, predicted_normal_loss, predicted_depth_loss, depth_loss_gaussians, envlight_loss, min_scale_loss
+from utils.loss_utils import l1_loss, l2_loss, ssim, predicted_normal_loss, sh_loss, predicted_depth_loss, depth_loss_gaussians, envlight_loss, min_scale_loss
 from gaussian_renderer import render, network_gui
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -29,6 +29,7 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from omegaconf import DictConfig
 import hydra
+from utils.sh_utils import render_sh_map
 
 
 try:
@@ -71,26 +72,26 @@ def training(cfg, testing_iterations, saving_iterations):
         envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
         # Get environment lighting object for the current training image
         model.envlight.set_base(envlight_sh)
-        # Repeat for sky light
-        skylight_sh = model.skylight_sh_mlp(embedding_gt_image)
-        model.skylight.set_base(skylight_sh)
+        # Repeat for sky color
+        sky_sh = model.sky_sh_mlp(embedding_gt_image)
+        # Compute shadows
+        shadows = model.get_shadows(envlight_sh)
 
-        if cfg.fix_sky:
-            render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, cfg.pipe, background, debug=False, fix_sky=True)
-        else:
-            render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False)
+
+        render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-        sky_color = render_pkg["sky_color"]
+        diff_col, spec_col = render_pkg["diffuse_color"], render_pkg["specular_color"]
 
         # Loss
-        if cfg.fix_sky:
-            rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *(1.0 - ssim(image, gt_image, mask=occluders_mask*sky_mask))
-        else:
-            Ll1 = l1_loss(image, gt_image, mask=occluders_mask*sky_mask) + l1_loss(sky_color, gt_image, mask=1-sky_mask)
-            Ssim = (1.0 - ssim(image, gt_image, mask=occluders_mask*sky_mask)) + (1.0 - ssim(sky_color, gt_image, mask=1-sky_mask))
-            rec_loss = Ll1*(1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim *Ssim
+        Ll1 = l1_loss(image, gt_image, mask=occluders_mask)
+        Ssim = (1.0 - ssim(image, gt_image, mask=occluders_mask))
+        rec_loss = Ll1 * (1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim * Ssim
         loss = rec_loss
         logs =  {"Reconstruction loss": f"{rec_loss:.{7}f}"}
+
+        # Additional reg
+        loss_sky_brdf = l1_loss(diff_col, torch.zeros_like(diff_col), mask=1-sky_mask) + l1_loss(spec_col, torch.zeros_like(spec_col), mask=1-sky_mask)
+        loss += 0.5 * loss_sky_brdf
 
 
         # Normal regularization
@@ -111,14 +112,13 @@ def training(cfg, testing_iterations, saving_iterations):
             with torch.no_grad():
                 normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
                 normals = normals[~model.gaussians.get_is_sky.squeeze()]
-            envl_loss = cfg.optimizer.lambda_envlight*envlight_loss(envlight_sh.squeeze(), model.envlight.get_shdegree, normals)
-            skyl_loss = cfg.optimizer.lambda_envlight*envlight_loss(skylight_sh.squeeze(), model.skylight.get_shdegree, normals)
-            loss += envl_loss + skyl_loss
+            envl_loss = cfg.optimizer.lambda_envlight * envlight_loss(envlight_sh.squeeze(), model.envlight.get_shdegree, normals)
+            loss += envl_loss
             logs.update({"Envlight loss": f"{envl_loss:.{5}f}"})
 
         # Planar regularization
         if cfg.optimizer.lambda_scale > 0:
-            scale_loss = cfg.optimizer.lambda_scale*min_scale_loss(radii, model.gaussians)
+            scale_loss = cfg.optimizer.lambda_scale * min_scale_loss(radii, model.gaussians)
             loss += scale_loss
 
         # Depth regularization
@@ -128,7 +128,7 @@ def training(cfg, testing_iterations, saving_iterations):
             sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
             avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
             avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
-            depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss*depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
+            depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss * depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
             loss += depth_loss_sky_gauss
             logs.update({"Depth loss": f"{depth_loss_sky_gauss:.{5}f}"})
 
@@ -155,7 +155,7 @@ def training(cfg, testing_iterations, saving_iterations):
             losses_extra['psnr'] = psnr(image*occluders_mask, gt_image*occluders_mask).mean()
             training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations,
-                            model, render, {"pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky})
+                            model, render, {"sky_sh_degree": cfg.sky_sh_degree, "pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky})
             if iteration in saving_iterations or iteration == cfg.optimizer.iterations:
                 print(f" ITER: {iteration} saving model")
                 model.save(iteration)
@@ -228,28 +228,28 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         viewpoint_cam_id = torch.tensor([viewpoint.uid], device = 'cuda')
                         embedding_gt_image = model.embeddings(viewpoint_cam_id)
                         envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
-                        skylight_sh = model.skylight_sh_mlp(embedding_gt_image)
+                        sky_sh = model.sky_sh_mlp(embedding_gt_image)
                         model.envlight.set_base(envlight_sh)
-                        model.skylight.set_base(skylight_sh)
-                        render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, model.skylight, renderArgs["pipe"],
+                        shadows = model.get_shadows(envlight_sh)
+                        render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, sky_sh, renderArgs["sky_sh_degree"], shadows, renderArgs["pipe"],
                                                 renderArgs["background"], debug=renderArgs["debug"], fix_sky=renderArgs["fix_sky"])
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
                         images.append(image)
                         gt_image = torch.clamp(gt_image, 0.0, 1.0)
                         gts.append(gt_image)
                         reconstructed_envlight = model.envlight.render_sh().cuda().permute(2,0,1)
-                        reconstructed_skylight = model.skylight.render_sh().cuda().permute(2,0,1)
+                        reconstructed_sky_map = render_sh_map(sky_sh.squeeze()).cuda().permute(2,0,1)
                         if tb_writer and (idx < 10):
                             tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                             tb_writer.add_images(config['name'] + "_view_{}/reconstructed_envlight".format(viewpoint.image_name), reconstructed_envlight[None], global_step=iteration)
-                            tb_writer.add_images(config['name'] + "_view_{}/reconstructed_skylight".format(viewpoint.image_name), reconstructed_skylight[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/reconstructed_sky_map".format(viewpoint.image_name), reconstructed_sky_map[None], global_step=iteration)
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
-                                if render_pkg[k].dim()<3 or k=="render" :
+                                if (render_pkg[k].dim()<3 or k=="render") and (k != "render_sun_dir"):
                                     continue
                                 if "diffuse" in k:
                                     image_k = render_pkg[k]
-                                if k == "depth":
+                                elif k == "depth":
                                     image_k = apply_depth_colormap(-render_pkg[k][0][...,None])
                                     image_k = image_k.permute(2,0,1)
                                 elif k == "alpha":
@@ -265,8 +265,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                     l1_train = torch.tensor(l1_losses).mean() 
                     psnrs = [psnr(image, gt) for image, gt in zip(images,gts)]
                     psnr_train = torch.mean(torch.stack(psnrs))
-
-                    print("\n[ITER {}] Evaluating train {}: L1 {} PSNR {}".format(iteration, config['name'], l1_train, psnr_train))
+                    print("\n[ITER {}] Evaluating train : L1 {} PSNR {}".format(iteration, l1_train, psnr_train))
                     if tb_writer:
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_train, iteration)
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_train, iteration)
@@ -295,7 +294,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=6009)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[1, 7_000, 30_000])
     parser.add_argument("--eval", action="store_true")
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
