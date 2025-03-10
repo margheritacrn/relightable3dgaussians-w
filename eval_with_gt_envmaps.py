@@ -108,7 +108,8 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
             gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
             model.envlight.set_base(gt_envmap_sh_rot)
             sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
+            shadows = model.get_shadows(gt_envmap_sh_rot)
+            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
             # compute metrics
@@ -125,7 +126,8 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
         gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
         model.envlight.set_base(gt_envmap_sh_rot.T)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
+        shadows = model.get_shadows(gt_envmap_sh_rot)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
         rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         psnrs.append(mse2psnr(img2mse(rendering_masked, gt_image, mask=mask)))
@@ -222,7 +224,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False, test_iter=False):
             gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
             model.envlight.set_base(gt_envmap_sh_rot)
             sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
+            shadows = model.get_shadows(gt_envmap_sh_rot)
+            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
             # compute metrics
@@ -253,8 +256,9 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False, test_iter=False):
         gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
         model.envlight.set_base(gt_envmap_sh_rot.T)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
+        shadows = model.get_shadows(gt_envmap_sh_rot)
 
-        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
         rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         torch.cuda.synchronize()
