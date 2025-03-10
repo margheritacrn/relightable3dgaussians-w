@@ -192,7 +192,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
 
     if debug:
         shadows_all = torch.zeros_like(roughness)
-        shadows[~sky_gaussians_mask] = shadows
+        shadows_all[~sky_gaussians_mask] = shadows
         render_extras.update({
             "sky_color": sky_color,
             "roughness": roughness.repeat(1, 3),
