@@ -233,7 +233,7 @@ def sample_points_on_unit_hemisphere(num_points, *, dtype=None, xnp=torch):
     torch.manual_seed(0)
     y = - 0.5 * xnp.rand(num_points)
     theta = torch.acos(y)
-    phi = xnp.pi*(1/2) * xnp.rand(num_points) -xnp.pi/4 # phi in [-pi/4, pi/4]
+    phi = xnp.pi*(1/2) * xnp.rand(num_points) - xnp.pi/4 # phi in [-pi/4, pi/4]
     # Spherical to cartesian
     x = xnp.sin(phi) * xnp.sin(theta)
     z = xnp.sin(theta) * xnp.cos(phi)
