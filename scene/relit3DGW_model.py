@@ -301,7 +301,7 @@ class Relightable3DGW:
         self.sky_sh_mlp.load_state_dict(state_dict_sky_sh_mlp)
 
         state_dict_shadow_mlp = torch.load(checkpoint_shadow_mlp, weights_only=True)
-        self.shadow_mlp = ShadowMlp(input_dim=((self.envlight_sh_degree+1)**2)*3 + 3)
+        self.shadow_mlp = ShadowMlp(input_dim=((self.config.envlight_sh_degree+1)**2)*3 + 3)
         self.shadow_mlp.load_state_dict(state_dict_shadow_mlp)
 
         if self.config.dataset.eval:
