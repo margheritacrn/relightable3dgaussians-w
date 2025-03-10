@@ -32,13 +32,13 @@ from eval_with_gt_envmaps import process_environment_map_image
 import glob
 
 
-def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model, pipeline, background):
+def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model, pipeline, background, sky_sh_degree):
     render_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "renders_with_gt_envmaps")
-    gts_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "gt")
+    gt_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "gt")
 
 
     makedirs(render_path, exist_ok=True)
-    makedirs(gts_path, exist_ok=True)
+    makedirs(gt_path, exist_ok=True)
     
     # Envmaps params
     scale = 10
@@ -62,8 +62,9 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         envlight_sh = torch.tensor(envlight_sh, dtype=torch.float32, device="cuda")
         gt = view.original_image.cuda()
         model.envlight.set_base(envlight_sh)
-        model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
-        render_pkg = render(view, model.gaussians, model.envlight, model.skylight, pipeline, background, debug=True, fix_sky=True)
+        sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
+        shadows = model.get_shadows(envlight_sh)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, shadows, pipeline, background, debug=True, fix_sky=True)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
 
@@ -88,19 +89,19 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
 
         gt = gt[0:3, :, :]
         torchvision.utils.save_image(render_pkg["render"], os.path.join(render_path, view.image_name + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gt_path, view.image_name + ".png"))
 
 
-def render_set(model_path, name, iteration, views, model, pipeline, background, fix_sky):
+def render_set(model_path, name, iteration, views, model, pipeline, background, sky_sh_degree, fix_sky):
     render_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "renders")
-    gts_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "gt")
+    gt_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "gts")
     lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_envlights")
-    sky_lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_skylights")
+    sky_map_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_sky_maps")
 
     makedirs(render_path, exist_ok=True)
-    makedirs(gts_path, exist_ok=True)
+    makedirs(gt_path, exist_ok=True)
     makedirs(lighting_path, exist_ok=True)
-    makedirs(sky_lighting_path, exist_ok=True)
+    makedirs(sky_map_path, exist_ok=True)
 
 
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
@@ -114,16 +115,16 @@ def render_set(model_path, name, iteration, views, model, pipeline, background, 
             embedding_gt = model.embeddings(view_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt)
         model.envlight.set_base(envlight_sh)
-        skylight_sh = model.skylight_sh_mlp(embedding_gt)
-        model.skylight.set_base(skylight_sh)
-        render_pkg = render(view, model.gaussians, model.envlight, model.skylight, pipeline, background, debug=True, fix_sky=fix_sky)
+        sky_sh = model.skylight_sh_mlp(embedding_gt)
+        shadows = model.get_shadows(envlight_sh)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, shadows, pipeline, background, debug=True, fix_sky=fix_sky)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
         torch.cuda.synchronize()
 
         gt = gt[0:3, :, :]
         torchvision.utils.save_image(render_pkg["render"], os.path.join(render_path, view.image_name + ".png"))
-        torchvision.utils.save_image(gt, os.path.join(gts_path, view.image_name + ".png"))
+        torchvision.utils.save_image(gt, os.path.join(gt_path, view.image_name + ".png"))
         for k in render_pkg.keys():
             if render_pkg[k].dim()<3 or k=="render" or k=="delta_normal_norm" or k == "normal_ref" or k == "alpha":
                 continue
@@ -146,7 +147,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background, 
         model.render_envlights_sh_all(save_path=lighting_path, eval = True, save_sh_coeffs=True)
     else:
         model.render_envlights_sh_all(save_path=lighting_path, eval = False, save_sh_coeffs=True)
-        model.render_skylights_sh_all(save_path=sky_lighting_path, eval = False, save_sh_coeffs=True)
+        model.render_sky_sh_all(save_path=sky_map_path, eval = False, save_sh_coeffs=True)
 
 
 def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps: bool=False):
@@ -158,14 +159,14 @@ def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps
         fix_sky = cfg.fix_sky
 
         if not skip_train:
-             render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background, fix_sky)
+             render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, fix_sky)
 
         if not skip_test:
             if not render_with_gt_envmaps:
                 model.optimize_embeddings_test()
-                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background, fix_sky)
+                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, fix_sky)
             else:
-                render_test_with_gt_envmaps(cfg.dataset.source_path,cfg.dataset.model_path,model.load_iteration,model.scene.getTestCameras(), model, cfg.pipe, background)
+                render_test_with_gt_envmaps(cfg.dataset.source_path,cfg.dataset.model_path,model.load_iteration,model.scene.getTestCameras(), model, cfg.pipe, background, cfg.sky_sh_degree)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
