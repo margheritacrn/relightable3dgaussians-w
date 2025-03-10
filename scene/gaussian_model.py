@@ -420,7 +420,7 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["skylight_sh", "envlight_sh", "embeddings", "sky_radius"]:
+            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius"]:
                 continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -438,7 +438,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask, mask_xyz):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["skylight_sh", "envlight_sh", "embeddings", "sky_radius"]:
+            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius"]:
                 continue
             if group["name"] == "xyz":
                 mask_prune = mask_xyz
@@ -485,7 +485,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"]in ["skylight_sh", "envlight_sh", "embeddings", "sky_radius"]:
+            if group["name"]in ["sky_sh", "envlight_sh", "embeddings", "sky_radius"]:
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
