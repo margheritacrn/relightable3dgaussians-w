@@ -1,6 +1,6 @@
 # optimizer parameters
 # gaussians
-iterations:  50_000
+iterations:  40_000
 position_lr_init: 0.00016
 position_lr_final: 0.0000016
 position_lr_delay_mult: 0.01
@@ -26,7 +26,7 @@ reg_normal_from_iter: 15_000
 lambda_normal: 0.05
 smooth_depth_from_iter: 15_000
 lambda_depth_smooth: 0
-reg_sky_gauss_depth_from_iter: 15_000
+reg_sky_gauss_depth_from_iter: 0
 lambda_sky_gauss : 0.05
 reg_sky_depth_from_iter: 0
 lambda_sky_depth: 0.05
@@ -41,3 +41,5 @@ envlight_prior_until_iter: 0
 embeddings_lr: 0.0002
 embednet_pretrain_epochs: 100
 optim_embeddings_test_iters: 100
+# shadow mlp
+shadow_mlp_lr: 0.0005
