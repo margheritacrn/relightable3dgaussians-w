@@ -209,6 +209,7 @@ dependencies:
       - open3d==0.18.0
       - opencv-python==4.10.0.84
       - optuna==4.2.0
+      - kaleido==0.2.1
       - pandas==2.2.3
       - pillow==10.4.0
       - plotly==5.24.1
