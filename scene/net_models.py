@@ -3,9 +3,6 @@ from torch import Tensor, nn
 import numpy as np
 from tqdm import tqdm
 from data.dataloader_net import load_train_test
-# TODO: is np.int32 necessary?
-# TODO: input resized to? 256? assume 3x256x256
-# TODO: consider whether to add another dense layer to the encoder
 
 
 def init_weights(l):
@@ -160,7 +157,7 @@ class EmbeddingNet(nn.Module):
 
 class SHMlp(nn.Module):
     """
-    The MLP takes as input an embedding vector and returns SH coefficients representing
+    The MLP takes as input an image embedding vector and returns SH coefficients representing
     the environment light.
     """
     def __init__(self, sh_degree: int = 4, embedding_dim: int = 32, dense_layer_size: int = 64):
@@ -226,3 +223,43 @@ class SHMlp(nn.Module):
                 mse.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
                 optim.step() 
+
+
+class ShadowMlp(nn.Module):
+    """
+    #TODO: add doc
+    """
+    def __init__(self, input_dim: int , dense_layer_size: int = 128):
+        super().__init__()
+        self.input_dim = input_dim
+        self.dense_layer_size = dense_layer_size
+        self.optimizer = torch.optim.Adam
+
+
+        self.mlp = nn.Sequential(
+            nn.Linear(self.input_dim, self.dense_layer_size),
+            nn.ReLU(), 
+            nn.Linear(self.dense_layer_size, self.dense_layer_size),
+            nn.ReLU(),
+            nn.Linear(self.dense_layer_size, 1),
+            nn.Sigmoid()
+        )
+
+        for linear_layer in [self.mlp]:
+             linear_layer.apply(init_weights)
+
+
+    def forward(self, envlight_sh, pos):  # Nx3x9, Nx1, Nx3
+        input = torch.cat((envlight_sh, pos), dim=-1)
+        return self.mlp(input) # N x 1
+
+
+    def get_optimizer(self):
+        return self.optimizer(self.parameters(), lr=0.002)
+    
+
+    def save_weights(self, path: str, epoch: int):
+        torch.save(self.state_dict(), path + "/ShadowMlp_model_epoch_"+str(epoch)+".pth")
+
+
+

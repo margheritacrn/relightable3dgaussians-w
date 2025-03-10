@@ -123,6 +123,36 @@ class EnvironmentLight(torch.nn.Module):
         return util.gamma_correction(illu_hdr) # linear --> sRGB
 
 
+    def shade_specular_precomp(self, gb_normal:torch.tensor, albedo:torch.tensor,
+              specularity:torch.tensor=None, specular_intensity:torch.tensor=None)->Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        """
+       #TODO: add doc
+        """        
+
+        nrmvec = gb_normal
+
+        diffuse_irradiance_hdr = torch.nn.functional.relu(self.get_diffuse_irradiance(nrmvec.squeeze()))
+        # Compute diffuse color
+        diffuse_rgb_hdr = albedo * diffuse_irradiance_hdr
+        # Gamma correction: linear --> sRGB
+        diffuse_rgb_ldr = util.gamma_correction(diffuse_rgb_hdr)
+        extras = {"diffuse": diffuse_rgb_ldr}
+
+        if specular_intensity is None:
+            extras.update({"specular": torch.zeros_like(extras["diffuse"])})
+
+            return diffuse_rgb_ldr, extras
+        else:
+            specular_rgb_hdr = specularity*specular_intensity
+            shaded_rgb = (1-specularity) * diffuse_rgb_hdr + specular_rgb_hdr
+            # Gamma correction: linear --> sRGB
+            shaded_rgb_ldr = util.gamma_correction(shaded_rgb) 
+            specular_rgb_ldr = util.gamma_correction(specular_rgb_hdr)
+            extras.update({'specular': specular_rgb_ldr})
+
+            return shaded_rgb_ldr, extras
+
+
     def shade(self, gb_pos:torch.tensor, gb_normal:torch.tensor, albedo:torch.tensor, view_pos:torch.tensor,
               kr:torch.tensor=None, km:torch.tensor=None, specular:bool=True)->Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
