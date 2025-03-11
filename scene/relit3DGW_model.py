@@ -2,7 +2,7 @@
 import torch
 from scene.NVDIFFREC import EnvironmentLight
 from scene.NVDIFFREC import util
-from scene.net_models import SHMlp, EmbeddingNet, ShadowMlp
+from scene.net_models import SHMlp, EmbeddingNet, ShadowMlp, MLPNet
 from omegaconf import OmegaConf, DictConfig
 import hydra
 from scene import GaussianModel, Scene
@@ -57,12 +57,18 @@ class Relightable3DGW:
 
             self.gaussians.augment_with_sky_gaussians(cameras=self.train_cameras)
 
+            self.mlp: MLPNet = MLPNet(sh_degree_envl=self.config.envlight_sh_degree, sh_degree_sky=self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
+            self.mlp.cuda()
+            """
             self.envlight_sh_mlp: SHMlp = SHMlp(sh_degree=self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
             self.envlight_sh_mlp.cuda()
-            self.sky_sh_mlp: SHMlp = SHMlp(sh_degree=self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
+            # self.sky_sh_mlp: SHMlp = SHMlp(sh_degree=self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
+            self.sky_sh_mlp: SHMlp = SHMlp(sh_degree=self.config.sky_sh_degree, embedding_dim=((self.config.envlight_sh_degree+1)**2)*3)
             self.sky_sh_mlp.cuda()
-            self.shadow_mlp: ShadowMlp = ShadowMlp(input_dim=((config.envlight_sh_degree+1)**2)*3 + 3)
-            self.shadow_mlp.cuda()
+            """
+            if self.config.use_shadows:
+                self.shadow_mlp: ShadowMlp = ShadowMlp(input_dim=((config.envlight_sh_degree+1)**2)*3 + 3)
+                self.shadow_mlp.cuda()
             if self.config.init_sh_mlp:
                 self.envlight_sh_prior_path = os.path.join(self.config.dataset.source_path, "train/envmaps_init")
                 if os.path.exists(self.envlight_sh_prior_path):
@@ -137,7 +143,8 @@ class Relightable3DGW:
         train_data = TensorDataset(imgs, target_sh[:, :(self.config.envlight_sh_degree + 1)**2, :])
         batch_size = 32
         dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-        self.envlight_sh_mlp.initialize(dataloader, epochs = 100)
+        #self.envlight_sh_mlp.initialize(dataloader, epochs = 100)
+        self.mlp.initialize_sh_envl(dataloader, epochs = 100)
 
 
     def training_set_up(self):
@@ -145,14 +152,20 @@ class Relightable3DGW:
         gaussians_opt_params = self.gaussians.training_setup(training_args)
 
         model_opt_params =  [
+            {'params': self.mlp.parameters(), 'lr': training_args.mlp_lr, "name": 'mlp'},
+            {'params': self.embeddings.parameters(), 'lr': training_args.embeddings_lr, "name": 'embeddings'}    
+        ]
+        """
+        model_opt_params =  [
             {'params': self.envlight_sh_mlp.parameters(), 'lr': training_args.envlight_sh_lr,
              'weight_decay': training_args.envlight_sh_wd, "name": 'envlight_sh'},
             {'params': self.sky_sh_mlp.parameters(), 'lr': training_args.envlight_sh_lr,
              'weight_decay': training_args.envlight_sh_wd, "name": 'sky_sh'},
-            {'params': self.embeddings.parameters(), 'lr': training_args.embeddings_lr, "name": 'embeddings'},
-            {'params': self.shadow_mlp.parameters(), 'lr': training_args.shadow_mlp_lr, "name": 'shadow_mlp'},
-            
+            {'params': self.embeddings.parameters(), 'lr': training_args.embeddings_lr, "name": 'embeddings'}    
         ]
+        """
+        if self.config.use_shadows:
+            model_opt_params.append({'params': self.shadow_mlp.parameters(), 'lr': training_args.shadow_mlp_lr, "name": 'shadow_mlp'})
         model_opt_params.extend(gaussians_opt_params)
 
         self.optimizer = torch.optim.Adam(model_opt_params, lr=0.01, eps=1e-15)
@@ -170,7 +183,7 @@ class Relightable3DGW:
         ''' Learning rate scheduling per step '''
         self.gaussians.update_learning_rate(iteration)
         for param_group in self.optimizer.param_groups:
-            if iteration == 30000 and (param_group["name"] in ["envlight_sh", "embeddings", "sky_sh", "spec_mlp"]):
+            if iteration == 30000 and (param_group["name"] in ["envlight_sh", "embeddings", "sky_sh", "shadow_mlp"]):
                 param_group['lr'] = 0.0001
 
 
@@ -188,11 +201,12 @@ class Relightable3DGW:
                     image_embed = self.embeddings_test(viewpoint_cam_id)
                 else:
                     image_embed = self.embeddings(viewpoint_cam_id)
-                envlights_sh[viewpoint_cam.image_name] = self.envlight_sh_mlp(image_embed).detach().cpu().numpy()
+                # envlights_sh[viewpoint_cam.image_name] = self.envlight_sh_mlp(image_embed).detach().cpu().numpy()
+                envlights_sh[viewpoint_cam.image_name] = self.mlp(image_embed)[0].detach().cpu().numpy()
         return envlights_sh
     
 
-    def get_skys_sh_all(self, eval=False):
+    def get_sky_sh_all(self, eval=False):
         skys_sh = {}
         if eval:
             viewpoint_stack = self.scene.getTestCameras().copy()
@@ -206,7 +220,8 @@ class Relightable3DGW:
                     image_embed = self.embeddings_test(viewpoint_cam_id)
                 else:
                     image_embed = self.embeddings(viewpoint_cam_id)
-                skys_sh[viewpoint_cam.image_name] = self.sky_sh_mlp(image_embed).detach().cpu().numpy()
+                # skys_sh[viewpoint_cam.image_name] = self.sky_sh_mlp(image_embed).detach().cpu().numpy()
+                skys_sh[viewpoint_cam.image_name] = self.mlp(image_embed)[1].detach().cpu().numpy()
         return skys_sh
     
 
@@ -221,7 +236,7 @@ class Relightable3DGW:
             torchvision.utils.save_image(rendered_sh.permute(2,0,1), save_path_im)
 
 
-    def render_skys_sh_all(self, save_path: str, eval=False, save_sh_coeffs=False):
+    def render_sky_sh_all(self, save_path: str, eval=False, save_sh_coeffs=False):
         envlights_sh = self.get_skys_sh_all(eval)
         for im_name in envlights_sh.keys():
             self.sky.set_base(envlights_sh[im_name])
@@ -244,24 +259,36 @@ class Relightable3DGW:
         os.makedirs(embeds_path, exist_ok=True)
         envlights_sh_path = os.path.join(model_path, "envlights_sh/iteration_{}".format(iteration))
         os.makedirs(envlights_sh_path, exist_ok=True)
+        mlp_path = os.path.join(model_path, "checkpoint_MLP/iteration_{}".format(iteration))
+        os.makedirs(mlp_path, exist_ok=True)
+        """
         sh_mlp_path = os.path.join(model_path, "checkpoint_SHMlp/iteration_{}".format(iteration))
         os.makedirs(sh_mlp_path, exist_ok=True)
         sky_sh_mlp_path = os.path.join(model_path, "checkpoint_sky_SHMlp/iteration_{}".format(iteration))
         os.makedirs(sky_sh_mlp_path, exist_ok=True)
-        shadow_mlp_path = os.path.join(model_path, "checkpoint_shadowMlp/iteration_{}".format(iteration))
-        os.makedirs(shadow_mlp_path, exist_ok=True)
+        """
+        if self.config.use_shadows:
+            shadow_mlp_path = os.path.join(model_path, "checkpoint_shadowMlp/iteration_{}".format(iteration))
+            os.makedirs(shadow_mlp_path, exist_ok=True)
 
         print("Saving embeddings weights\n")
         torch.save(self.embeddings.weight, embeds_path + "/embeddings_weights.pth")
 
+        
+        print("Saving MLP weights\n")
+        torch.save(self.mlp.state_dict(), mlp_path +  "/MLP_weights.pth")
+
+        """"
         print("Saving SH MLP weights\n")
         torch.save(self.envlight_sh_mlp.state_dict(), sh_mlp_path +  "/SHMlp_weights.pth")
 
         print("Saving sky SH MLP weights\n")
         torch.save(self.sky_sh_mlp.state_dict(), sky_sh_mlp_path +  "/sky_SHMlp_weights.pth")
+        """
 
-        print("Saving shadow MLP weights\n")
-        torch.save(self.shadow_mlp.state_dict(), shadow_mlp_path +  "/shadow_Mlp_weights.pth")
+        if self.config.use_shadows:
+            print("Saving shadow MLP weights\n")
+            torch.save(self.shadow_mlp.state_dict(), shadow_mlp_path +  "/shadow_Mlp_weights.pth")
 
         print("Saving envlights SH coefficients\n")
         envlights_sh = self.get_envlights_sh_all()
@@ -275,15 +302,22 @@ class Relightable3DGW:
         """Load model at iteration self.load_iteration"""
         checkpoint_ply = os.path.join(self.config.dataset.model_path, f"point_cloud/iteration_{self.load_iteration}/point_cloud.ply")
         checkpoint_embeddings = os.path.join(self.config.dataset.model_path, f"checkpoint_embeddings/iteration_{self.load_iteration}/embeddings_weights.pth")
+        checkpoint_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_MLP/iteration_{self.load_iteration}/MLP_weights.pth")
+        """
         checkpoint_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_SHMlp/iteration_{self.load_iteration}/SHMlp_weights.pth")
-        checkpoint_sky_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_sky_SHMlp/iteration_{self.load_iteration}/sky_SHMlp_weights.pth")
-        checkpoint_shadow_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_shadowMlp/iteration_{self.load_iteration}/shadow_Mlp_weights.pth")
+        checkpoint_sky_sh_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_sky_SHMlp/iteration_{self.load_iteration}/sky_SHMlp_weights.pth")"
+        """
+        if self.config.use_shadows:
+            checkpoint_shadow_mlp = os.path.join(self.config.dataset.model_path, f"checkpoint_shadowMlp/iteration_{self.load_iteration}/shadow_Mlp_weights.pth")
+            assert  os.path.exists(checkpoint_shadow_mlp), f"Loading model at iter {self.load_iteration}- shadow MLP checkpoint path not found"
     
         assert os.path.exists(checkpoint_ply) , f"Loading model at iter {self.load_iteration}- point cloud checkpoint path not found"
         assert  os.path.exists(checkpoint_embeddings), f"Loading model at iter {self.load_iteration}- embeddings checkpoint path not found"
+        assert  os.path.exists(checkpoint_mlp), f"Loading model at iter {self.load_iteration}- MLP checkpoint path not found"
+        """"
         assert  os.path.exists(checkpoint_sh_mlp), f"Loading model at iter {self.load_iteration}- SH MLP checkpoint path not found"
-        assert  os.path.exists(checkpoint_sky_sh_mlp), f"Loading model at iter {self.load_iteration}- sky SH MLP checkpoint path not found"
-        assert  os.path.exists(checkpoint_shadow_mlp), f"Loading model at iter {self.load_iteration}- shadow MLP checkpoint path not found"
+        assert  os.path.exists(checkpoint_sky_sh_mlp), f"Loading model at iter {self.load_iteration}- sky SH MLP checkpoint path not found""
+        """
 
         self.gaussians.load_ply(checkpoint_ply)
                                          
@@ -292,25 +326,35 @@ class Relightable3DGW:
         self.embeddings.weight = embeds
         self.embeddings.cuda()
 
+        """
         state_dict_sh_mlp = torch.load(checkpoint_sh_mlp, weights_only=True)
         self.envlight_sh_mlp = SHMlp(sh_degree = self.config.envlight_sh_degree, embedding_dim=self.config.embeddings_dim)
         self.envlight_sh_mlp.load_state_dict(state_dict_sh_mlp)
 
         state_dict_sky_sh_mlp = torch.load(checkpoint_sky_sh_mlp, weights_only=True)
-        self.sky_sh_mlp = SHMlp(sh_degree = self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
-        self.sky_sh_mlp.load_state_dict(state_dict_sky_sh_mlp)
+        # self.sky_sh_mlp = SHMlp(sh_degree = self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
+        self.sky_sh_mlp: SHMlp = SHMlp(sh_degree=self.config.sky_sh_degree, embedding_dim=((self.config.envlight_sh_degree+1)**2)*3)
+        self.sky_sh_mlp.load_state_dict(state_dict_sky_sh_mlp)"
+        """
 
-        state_dict_shadow_mlp = torch.load(checkpoint_shadow_mlp, weights_only=True)
-        self.shadow_mlp = ShadowMlp(input_dim=((self.config.envlight_sh_degree+1)**2)*3 + 3)
-        self.shadow_mlp.load_state_dict(state_dict_shadow_mlp)
+        self.mlp = MLPNet(sh_degree_envl=self.config.envlight_sh_degree, sh_degree_sky=self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
+
+        if self.config.use_shadows:
+            state_dict_shadow_mlp = torch.load(checkpoint_shadow_mlp, weights_only=True)
+            self.shadow_mlp = ShadowMlp(input_dim=((self.config.envlight_sh_degree+1)**2)*3 + 3)
+            self.shadow_mlp.load_state_dict(state_dict_shadow_mlp)
 
         if self.config.dataset.eval:
-            self.envlight_sh_mlp.eval()
-            self.sky_sh_mlp.eval()
-            self.shadow_mlp.eval()
-        self.envlight_sh_mlp.cuda()
-        self.sky_sh_mlp.cuda()
-        self.shadow_mlp.cuda()
+            #self.envlight_sh_mlp.eval()
+            #self.sky_sh_mlp.eval()
+            self.mlp.eval()
+            if self.config.use_shadows:
+                self.shadow_mlp.eval()
+        #self.envlight_sh_mlp.cuda()
+        #self.sky_sh_mlp.cuda()
+        self.mlp.cuda()
+        if self.config.use_shadows:
+            self.shadow_mlp.cuda()
 
 
     def optimize_embeddings_test(self, mse=False):
