@@ -47,6 +47,103 @@ def process_environment_map_image(img_path, scale_high, threshold):
     coeffs = get_coefficients_from_image(img.numpy(), 4)
     return coeffs
 
+
+@torch.no_grad()
+def evaluate_test_report(model: Relightable3DGW, bg_color: torch.tensor, iteration: int, tb_writer=None):
+
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+    # Read test config
+    sys.path.append(model.config.dataset.test_config_path)
+    config_test = importlib.import_module("test_config").config
+    config_test_names = [key.split(".")[0] for key in config_test.keys()]
+
+    test_cameras = [c for c in model.scene.getTestCameras() if c.image_name in config_test_names]
+
+    psnrs = []
+
+    for view in tqdm(test_cameras):
+        print(view.image_name)
+
+        image_config = config_test[view.image_name]
+        mask_path = image_config["mask_path"]
+        envmap_img_path = image_config["env_map_path"]
+        init_rot_x = image_config["initial_env_map_rotation"]["x"]
+        init_rot_y = image_config["initial_env_map_rotation"]["y"]
+        init_rot_z = image_config["initial_env_map_rotation"]["z"]
+        threshold = image_config["env_map_scaling"]["threshold"]
+        scale = image_config["env_map_scaling"]["scale"]
+        sun_angle_range = image_config["sun_angles"]
+
+        gt_envmap_sh = process_environment_map_image(envmap_img_path, scale, threshold) # (25,3)
+
+        # Get gt
+        gt_image = view.original_image.cuda()
+
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        mask = cv2.resize(mask, (gt_image.shape[2], gt_image.shape[1]))
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.erode(mask, kernel, iterations=1)
+        mask = torch.from_numpy(mask//255).cuda()
+
+        best_psnr = 0
+        best_angle = None
+        all_psnrs = []
+
+        n = 51
+        sun_angles_prepare_list = torch.linspace(sun_angle_range[0], sun_angle_range[1], n)
+        sun_angles = [torch.tensor([angle,0, 0]) for angle in sun_angles_prepare_list] #rotate only around y
+
+        for angle in tqdm(sun_angles):
+            # rotate envmap and render
+            gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, init_rot_z, init_rot_y, init_rot_x, 'real')
+            gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, angle[2], angle[0], angle[1], 'real')
+            
+            gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
+            model.envlight.set_base(gt_envmap_sh_rot)
+            sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
+            if model.config.use_shadows:
+                shadows = model.get_shadows(gt_envmap_sh_rot)
+            else:
+                shadows = None
+            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, model.config.sky_sh_degree, shadows, model.config.pipe, background, debug=False, fix_sky=True)
+            render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
+
+            # compute metrics
+            current_psnr = mse2psnr(img2mse(render_pkg["render"], gt_image, mask=mask))
+            all_psnrs.append(current_psnr.cpu())
+
+            if current_psnr > best_psnr:
+                best_angle = angle
+                best_psnr = current_psnr
+
+
+        # Render with gtenvmap rotated according to best angles        
+        gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, init_rot_z, init_rot_y, init_rot_x, 'real')
+        gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, best_angle[2], best_angle[0], best_angle[1], 'real')
+
+   
+        gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
+        model.envlight.set_base(gt_envmap_sh_rot.T)
+        sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
+        if model.config.use_shadows:
+            shadows = model.get_shadows(gt_envmap_sh_rot)
+        else:
+            shadows = None
+
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, model.config.sky_sh_degree, shadows, model.config.pipe, background, debug=False, fix_sky=True)
+        rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
+        torch.cuda.synchronize()
+        gt_image = gt_image[0:3, :, :]
+        if tb_writer:
+            tb_writer.add_images("test" + "_view_{}/{}".format(view.image_name, "render"), rendering[None], global_step=iteration)
+            tb_writer.add_images("test" + "_view_{}/{}".format(view.image_name, "ground_truth"), gt_image[None], global_step=iteration)
+        # Compute metrics
+        psnrs.append(mse2psnr(img2mse(rendering, gt_image, mask=mask)))
+
+    return torch.tensor(psnrs).mean()
+
+
 @torch.no_grad()
 def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
     model = Relightable3DGW(cfg)
@@ -126,7 +223,10 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
         gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
         model.envlight.set_base(gt_envmap_sh_rot.T)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-        shadows = model.get_shadows(gt_envmap_sh_rot)
+        if cfg.use_shadows:
+            shadows = model.get_shadows(gt_envmap_sh_rot)
+        else:
+            shadows = None
         render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
         rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
@@ -141,15 +241,16 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
             
     return torch.tensor(psnrs).mean()
 
+
 @torch.no_grad()
-def render_and_evaluate_test_scenes(cfg, eval_all=False, test_iter=False):
+def render_and_evaluate_test_scenes(cfg, eval_all=False):
     model = Relightable3DGW(cfg)
 
     bg_color = [1,1,1] if cfg.dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
     # Read test config
-    sys.path.append(cfg.test_config)
+    sys.path.append(cfg.dataset.test_config_path)
     config_test = importlib.import_module("test_config").config
     config_test_names = [key.split(".")[0] for key in config_test.keys()]
 
@@ -224,7 +325,10 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False, test_iter=False):
             gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
             model.envlight.set_base(gt_envmap_sh_rot)
             sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-            shadows = model.get_shadows(gt_envmap_sh_rot)
+            if cfg.use_shadows:
+                shadows = model.get_shadows(gt_envmap_sh_rot)
+            else:
+                shadows = None
             render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
@@ -256,7 +360,10 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False, test_iter=False):
         gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot, dtype=torch.float32, device="cuda")
         model.envlight.set_base(gt_envmap_sh_rot.T)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-        shadows = model.get_shadows(gt_envmap_sh_rot)
+        if cfg.use_shadows:
+            shadows = model.get_shadows(gt_envmap_sh_rot)
+        else:
+            shadows = None
 
         render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False, fix_sky=True)
         rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
@@ -302,6 +409,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False, test_iter=False):
         print(f"  best MAEs: {maes_dict}", file=f)
         print(f"  best SSIMs: {ssims_dict}", file=f)
 
+
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
     print("Rendering with GT illumination" + cfg.dataset.model_path)
@@ -317,7 +425,7 @@ if __name__ == "__main__":
     parser.add_argument("--source_path", "-s", type=str)
     parser.add_argument("--model_path", "-m", type=str)
     parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--test_config", default="example_test_configs/lk2", type=str)
+    parser.add_argument("--test_config_path", type=str)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--eval_all", action="store_true")
     args = parser.parse_args(sys.argv[1:])
@@ -325,8 +433,8 @@ if __name__ == "__main__":
     cl_args = [
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
+        f"dataset.test_config_path={args.test_config_path}",
         f"load_iteration={str(args.iteration)}",
-        f"+test_config={args.test_config}",
         f"+eval_all={args.eval_all}"
     ]
 
