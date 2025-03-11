@@ -336,8 +336,9 @@ class Relightable3DGW:
         self.sky_sh_mlp: SHMlp = SHMlp(sh_degree=self.config.sky_sh_degree, embedding_dim=((self.config.envlight_sh_degree+1)**2)*3)
         self.sky_sh_mlp.load_state_dict(state_dict_sky_sh_mlp)"
         """
-        state_dict_sky_sh_mlp = torch.load(checkpoint_mlp, weights_only=True)
+        state_mlp = torch.load(checkpoint_mlp, weights_only=True)
         self.mlp = MLPNet(sh_degree_envl=self.config.envlight_sh_degree, sh_degree_sky=self.config.sky_sh_degree, embedding_dim=self.config.embeddings_dim)
+        self.mlp.load_state_dict(state_mlp)
 
         if self.config.use_shadows:
             state_dict_shadow_mlp = torch.load(checkpoint_shadow_mlp, weights_only=True)
