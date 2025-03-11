@@ -1,6 +1,7 @@
 #dataset parameters
 source_path: ""
 model_path: ""
+test_config_path: ""
 images: "images"
 resolution: -1
 white_background: False
