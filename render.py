@@ -63,7 +63,10 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         gt = view.original_image.cuda()
         model.envlight.set_base(envlight_sh)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-        shadows = model.get_shadows(envlight_sh)
+        if model.config.use_shadows:
+            shadows = model.get_shadows(envlight_sh)
+        else:
+            shadows = None
         render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, shadows, pipeline, background, debug=True, fix_sky=True)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
@@ -114,9 +117,13 @@ def render_set(model_path, name, iteration, views, model, pipeline, background, 
         else:
             embedding_gt = model.embeddings(view_id)
         envlight_sh = model.envlight_sh_mlp(embedding_gt)
-        model.envlight.set_base(envlight_sh)
-        sky_sh = model.sky_sh_mlp(embedding_gt)
-        shadows = model.get_shadows(envlight_sh)
+        envlight_sh, sky_sh = model.mlp(embedding_gt)
+        # model.envlight.set_base(envlight_sh)
+        # sky_sh = model.sky_sh_mlp(embedding_gt)
+        if model.config.use_shadows:
+            shadows = model.get_shadows(envlight_sh)
+        else:
+            shadows = None
         render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, shadows, pipeline, background, debug=True, fix_sky=fix_sky)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 

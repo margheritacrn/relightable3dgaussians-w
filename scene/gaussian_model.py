@@ -54,7 +54,7 @@ class GaussianModel:
 
 
         self.material_properties_activation = torch.sigmoid
-        self.default_roughness = 1.0
+        self.default_roughness = 0.6
         self.default_albedo = 1.0
         self.default_metalness = 0.1
 
@@ -420,7 +420,7 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp"]:
+            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp", "mlp"]:
                 continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -438,7 +438,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask, mask_xyz):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp"]:
+            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp", "mlp"]:
                 continue
             if group["name"] == "xyz":
                 mask_prune = mask_xyz
@@ -485,7 +485,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"]in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp"]:
+            if group["name"]in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp", "mlp"]:
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]

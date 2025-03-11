@@ -155,6 +155,68 @@ class EmbeddingNet(nn.Module):
             return out
 
 
+class MLPNet(nn.Module):
+    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 64):
+        super().__init__()
+        self.sh_dim_envl = (sh_degree_envl + 1)**2
+        self.sh_dim_sky = (sh_degree_sky + 1)**2
+        self.embedding_dim = embedding_dim
+        self.dense_layer_size = dense_layer_size
+        self.optimizer = torch.optim.Adam
+
+
+        self.base = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.dense_layer_size),
+            nn.Dropout(p=0.2),
+            nn.ReLU(), 
+            nn.Linear(self.dense_layer_size, self.dense_layer_size),
+            nn.ReLU(),
+        )
+
+        self.sh_all_envl = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
+                                         nn.ReLU(),
+                                         nn.Linear(self.dense_layer_size, self.sh_dim_envl*3))
+
+        self.sh_all_sky = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
+                                         nn.ReLU(),
+                                         nn.Linear(self.dense_layer_size, self.sh_dim_sky*3))
+
+        for linear_layer in [self.base, self.sh_all_envl, self.sh_all_sky]:
+             linear_layer.apply(init_weights)
+
+
+    def forward(self, e):
+        x = self.base(e)
+        sh_coeffs_envl = self.sh_all_envl(x).view(-1, self.sh_dim_envl, 3)
+        sh_coeff_sky = self.sh_all_sky(x).view(-1, self.sh_dim_sky, 3)
+        return sh_coeffs_envl, sh_coeff_sky
+
+
+    def get_optimizer(self):
+        return self.optimizer(self.parameters(), lr=0.002)
+    
+
+    def save_weights(self, path: str, epoch: int):
+        torch.save(self.state_dict(), path + "/MLPNet_epoch_"+str(epoch)+".pth")
+
+
+    def initialize_sh_envl(self, dataloader, epochs, optim=None):
+        if optim is None:
+            optim = self.get_optimizer()
+        loss_ = torch.nn.MSELoss()
+        for _ in range(epochs):
+            self.train()
+            for batch in dataloader:
+                optim.zero_grad() 
+                input = batch[0].squeeze().cuda()
+                sh_target = batch[1].cuda()
+                sh_out, _ = self(input)
+                mse = loss_(sh_target, sh_out)
+                mse.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
+                optim.step() 
+
+
 class SHMlp(nn.Module):
     """
     The MLP takes as input an image embedding vector and returns SH coefficients representing
