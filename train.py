@@ -9,12 +9,10 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 import os
-import torch.nn.functional as F
 import torch
-from torchvision import transforms
 from random import randint
-from utils.loss_utils import l1_loss, l2_loss, ssim, predicted_normal_loss, sh_loss, predicted_depth_loss, depth_loss_gaussians, envlight_loss, min_scale_loss
-from gaussian_renderer import render, network_gui
+from utils.loss_utils import l1_loss, ssim, depth_loss_gaussians, envlight_loss, min_scale_loss
+from gaussian_renderer import render
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
 from utils.image_utils import apply_depth_colormap
@@ -22,14 +20,11 @@ import uuid
 from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
-from arguments import ModelParams, PipelineParams, OptimizationParams
 from scene.relit3DGW_model import Relightable3DGW
-from scene.net_models import SHMlp, EmbeddingNet
-import torch.nn.functional as F
-from torch.utils.data import TensorDataset, DataLoader
 from omegaconf import DictConfig
 import hydra
 from utils.sh_utils import render_sh_map
+from eval_with_gt_envmaps import evaluate_test_report
 
 
 try:
@@ -45,6 +40,8 @@ def training(cfg, testing_iterations, saving_iterations):
     if cfg.init_sh_mlp:
         model.initialize_sh_mlp()
     model.training_set_up()
+
+    eval = cfg.dataset.eval
 
     bg_color = [1, 1, 1] if cfg.dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -69,13 +66,18 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Get SH coefficients of environment lighting for current training image
         embedding_gt_image = model.embeddings(viewpoint_cam_id)
-        envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
+        #envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
+        envlight_sh, sky_sh = model.mlp(embedding_gt_image)
         # Get environment lighting object for the current training image
         model.envlight.set_base(envlight_sh)
         # Repeat for sky color
-        sky_sh = model.sky_sh_mlp(embedding_gt_image)
+        # sky_sh = model.sky_sh_mlp(embedding_gt_image)
+        #sky_sh = model.sky_sh_mlp(envlight_sh.flatten())
         # Compute shadows
-        shadows = model.get_shadows(envlight_sh)
+        if cfg.use_shadows:
+            shadows = model.get_shadows(envlight_sh)
+        else:
+            shadows = None
 
 
         render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False)
@@ -93,7 +95,6 @@ def training(cfg, testing_iterations, saving_iterations):
         loss_sky_brdf = l1_loss(diff_col, torch.zeros_like(diff_col), mask=1-sky_mask) + l1_loss(spec_col, torch.zeros_like(spec_col), mask=1-sky_mask)
         loss += 0.5 * loss_sky_brdf
 
-
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
             rendered_normal = render_pkg["normal"]*occluders_mask*sky_mask
@@ -107,10 +108,10 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Envlight regularization
         if cfg.optimizer.lambda_envlight > 0:
-            viewing_dirs = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
-            viewing_dirs_norm = viewing_dirs/viewing_dirs.norm(dim=1, keepdim=True)
+            dir_pp = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
+            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
             with torch.no_grad():
-                normals = model.gaussians.get_normal(dir_pp_normalized=viewing_dirs_norm)
+                normals = model.gaussians.get_normal(dir_pp_normalized=dir_pp_normalized)
                 normals = normals[~model.gaussians.get_is_sky.squeeze()]
             envl_loss = cfg.optimizer.lambda_envlight * envlight_loss(envlight_sh.squeeze(), model.envlight.get_shdegree, normals)
             loss += envl_loss
@@ -131,7 +132,6 @@ def training(cfg, testing_iterations, saving_iterations):
             depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss * depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
             loss += depth_loss_sky_gauss
             logs.update({"Depth loss": f"{depth_loss_sky_gauss:.{5}f}"})
-
 
 
         loss.backward()
@@ -155,7 +155,7 @@ def training(cfg, testing_iterations, saving_iterations):
             losses_extra['psnr'] = psnr(image*occluders_mask, gt_image*occluders_mask).mean()
             training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations,
-                            model, render, {"sky_sh_degree": cfg.sky_sh_degree, "pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky})
+                            model, eval, render, {"sky_sh_degree": cfg.sky_sh_degree, "pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky})
             if iteration in saving_iterations or iteration == cfg.optimizer.iterations:
                 print(f" ITER: {iteration} saving model")
                 model.save(iteration)
@@ -168,8 +168,10 @@ def training(cfg, testing_iterations, saving_iterations):
                     grad_threshold = cfg.optimizer.densify_grad_threshold
 
                 if iteration > cfg.optimizer.densify_from_iter and iteration % cfg.optimizer.densification_interval == 0:
+                    dir_pp = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
+                    dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
                     size_threshold = 20 if iteration > cfg.optimizer.opacity_reset_interval else None
-                    model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, viewing_dirs_norm)
+                    model.gaussians.densify_and_prune(grad_threshold, 0.005, model.scene.cameras_extent, size_threshold, dir_pp_normalized)
                     grad_threshold = grad_thr_exp_scheduling(iteration, cfg.optimizer.densify_until_iter, cfg.optimizer.densify_grad_threshold)
 
                 if iteration % cfg.optimizer.opacity_reset_interval == 0 or (iteration == cfg.optimizer.densify_from_iter):
@@ -206,7 +208,8 @@ def prepare_output_and_logger(args):
         print("Tensorboard not available: not logging progress")
     return tb_writer
 
-def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elapsed, testing_iterations, model: Relightable3DGW, renderFunc, renderArgs):
+
+def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elapsed, testing_iterations, model: Relightable3DGW, eval, renderFunc, renderArgs):
     if tb_writer:
         tb_writer.add_scalar('train_loss_patches/l1_loss', Ll1.item(), iteration)
         tb_writer.add_scalar('train_loss_patches/total_loss', loss.item(), iteration)
@@ -217,9 +220,9 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
     # Report samples of training set
     if iteration in testing_iterations:
         torch.cuda.empty_cache()
-        validation_configs = [{'name': 'train', 'cameras' : [model.scene.getTrainCameras()[idx % len(model.scene.getTrainCameras())] for idx in range(5, 30, 5)]}]
+        train_config = [{'name': 'train', 'cameras' : [model.scene.getTrainCameras()[idx % len(model.scene.getTrainCameras())] for idx in range(5, 30, 5)]}]
         with torch.no_grad():
-            for config in validation_configs:
+            for config in train_config:
                 if config['cameras'] and len(config['cameras']) > 0:
                     images = []
                     gts = []
@@ -227,10 +230,15 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         gt_image = viewpoint.original_image.cuda()
                         viewpoint_cam_id = torch.tensor([viewpoint.uid], device = 'cuda')
                         embedding_gt_image = model.embeddings(viewpoint_cam_id)
-                        envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
-                        sky_sh = model.sky_sh_mlp(embedding_gt_image)
+                        envlight_sh, sky_sh = model.mlp(embedding_gt_image)
+                        #envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
+                        # sky_sh = model.sky_sh_mlp(embedding_gt_image)
+                        #sky_sh = model.sky_sh_mlp(envlight_sh.flatten())
                         model.envlight.set_base(envlight_sh)
-                        shadows = model.get_shadows(envlight_sh)
+                        if model.config.use_shadows:
+                            shadows = model.get_shadows(envlight_sh)
+                        else:
+                            shadows = None
                         render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, sky_sh, renderArgs["sky_sh_degree"], shadows, renderArgs["pipe"],
                                                 renderArgs["background"], debug=renderArgs["debug"], fix_sky=renderArgs["fix_sky"])
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
@@ -270,6 +278,10 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_train, iteration)
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_train, iteration)
 
+                    if eval:
+                        psnr_test =  evaluate_test_report(model, renderArgs["background"], iteration, tb_writer)
+                        print("\n[ITER {}] Evaluating test : PSNR {}".format(iteration, psnr_test))
+
         if tb_writer:
             tb_writer.add_histogram("scene/opacity_histogram", model.gaussians.get_opacity, iteration)
             tb_writer.add_histogram("scene/roughness_histogram", model.gaussians.get_roughness, iteration)
@@ -298,6 +310,7 @@ if __name__ == "__main__":
     parser.add_argument("--eval", action="store_true")
     parser.add_argument("--source_path", type=str)
     parser.add_argument("--model_path", type=str)
+    parser.add_argument("--test_config_path", type=str)
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--lambda_sky_gauss", type=float, default=0.05)
     parser.add_argument("--reg_normal_from_iter", type=float, default=15_000)
@@ -311,6 +324,7 @@ if __name__ == "__main__":
         f"dataset.eval={str(args.eval)}",
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
+        f"dataset.test_config_path={args.test_config_path}",
         f"optimizer.lambda_sky_gauss={args.lambda_sky_gauss}",
         f"optimizer.reg_normal_from_iter={args.reg_normal_from_iter}",
         f"optimizer.reg_sky_gauss_depth_from_iter={args.reg_sky_gauss_depth_from_iter}",
