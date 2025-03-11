@@ -116,9 +116,9 @@ def render_set(model_path, name, iteration, views, model, pipeline, background, 
             embedding_gt = model.embeddings_test(view_id)
         else:
             embedding_gt = model.embeddings(view_id)
-        envlight_sh = model.envlight_sh_mlp(embedding_gt)
+        #envlight_sh = model.envlight_sh_mlp(embedding_gt)
         envlight_sh, sky_sh = model.mlp(embedding_gt)
-        # model.envlight.set_base(envlight_sh)
+        model.envlight.set_base(envlight_sh)
         # sky_sh = model.sky_sh_mlp(embedding_gt)
         if model.config.use_shadows:
             shadows = model.get_shadows(envlight_sh)
