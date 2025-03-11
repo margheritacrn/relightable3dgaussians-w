@@ -87,6 +87,9 @@ class EnvironmentLight(torch.nn.Module):
             2 * self.C2 * self.base[1,:] * y +
             2 * self.C2 * self.base[2,:] * z
         )
+
+        diff_outlier = torch.sum(diffuse_irradiance[diffuse_irradiance < 0])
+
         return diffuse_irradiance
 
 
@@ -113,6 +116,7 @@ class EnvironmentLight(torch.nn.Module):
         spec_light = gwk_sh * envlight_sh # N x 25 x 3
 
         return spec_light
+
 
     def sample_illumination(self, gb_pos:torch.tensor, view_pos: torch.tensor):
         dir = util.safe_normalize(gb_pos - view_pos).squeeze()
@@ -166,7 +170,7 @@ class EnvironmentLight(torch.nn.Module):
             albedo : albedo of the surface, base color HxWxNx3
             kr:roguhness of points HxWxNx1
             km: metalness of points HxWxNx1
-            view_pos: viewing directions HxWxNx3
+            view_pos: camera position HxWxNx3
             envlight: SH coefficients of environment light 1xself.sh_dimx3
         Returns:
             rgb: shaded rgb color of shape HxWxNx3.
@@ -175,7 +179,7 @@ class EnvironmentLight(torch.nn.Module):
 
         nrmvec = gb_normal
 
-        diffuse_irradiance_hdr = torch.nn.functional.relu(self.get_diffuse_irradiance(nrmvec.squeeze()))
+        diffuse_irradiance_hdr = torch.clamp_min(self.get_diffuse_irradiance(nrmvec.squeeze()), 1e-4)
         # Compute diffuse color
         diffuse_rgb_hdr = albedo * diffuse_irradiance_hdr
         # Gamma correction: linear --> sRGB
@@ -200,7 +204,7 @@ class EnvironmentLight(torch.nn.Module):
             # Compute specular irradiance in reflection direction
             spec_irradiance_hdr = eval_sh(self.sh_degree, spec_light.transpose(1,2), reflvec.squeeze())
             # adjust dimensions
-            spec_irradiance_hdr = torch.nn.functional.relu(spec_irradiance_hdr[None, None, ...]) # (H, W, N, 3)
+            spec_irradiance_hdr = torch.clamp_min(spec_irradiance_hdr[None, None, ...], 1e-4) # (H, W, N, 3)
             # Compute reflectance
             if km is None:
                 F0 = torch.ones_like(albedo) * 0.04  # [1, H, W, 3]
@@ -214,9 +218,8 @@ class EnvironmentLight(torch.nn.Module):
             else:
                 shaded_rgb = (1-km) * diffuse_rgb_hdr + specular_rgb_hdr
             # Gamma correction: linear --> sRGB
-            shaded_rgb_ldr = util.gamma_correction(shaded_rgb) 
-            specular_rgb_ldr = util.gamma_correction(specular_rgb_hdr)
-            extras.update({'specular': specular_rgb_ldr})
+            shaded_rgb_ldr = util.gamma_correction(shaded_rgb)
+            extras.update({'specular': util.gamma_correction(specular_rgb_hdr)})
 
             return shaded_rgb_ldr, extras
 
