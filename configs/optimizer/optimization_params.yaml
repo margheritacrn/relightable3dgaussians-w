@@ -43,3 +43,5 @@ embednet_pretrain_epochs: 100
 optim_embeddings_test_iters: 100
 # shadow mlp
 shadow_mlp_lr: 0.0005
+# MLP net
+mlp_lr: 0.0002
