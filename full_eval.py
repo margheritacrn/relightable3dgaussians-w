@@ -40,7 +40,7 @@ if not args.skip_rendering:
     common_args = " --quiet "
     for scene, source in zip(nerfosr_scenes, all_sources):
         # os.system("python render.py --iteration 30000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
-        os.system("python render.py --iteration 40_000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
+        os.system("python render.py --iteration 40_000 ----render_with_gt_envmaps --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
 
 # Reconstruction eval
 if not args.skip_metrics:
