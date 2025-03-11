@@ -138,7 +138,10 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
                                                           albedo=albedo[~sky_gaussians_mask],
                                                           roughness=roughness[~sky_gaussians_mask], metalness=metalness[~sky_gaussians_mask],
                                                           specular=specular)
-    colors_precomp[~sky_gaussians_mask] = shadows * color_fg_gaussians.squeeze()
+    if shadows is not None:
+        colors_precomp[~sky_gaussians_mask] = shadows * color_fg_gaussians.squeeze()
+    else:
+        colors_precomp[~sky_gaussians_mask] = color_fg_gaussians.squeeze()
 
     # Compute color for the sky (background) Gaussians
     if fix_sky:
@@ -191,14 +194,15 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
     render_extras.update({"normal": normal})
 
     if debug:
-        shadows_all = torch.zeros_like(roughness)
-        shadows_all[~sky_gaussians_mask] = shadows
         render_extras.update({
             "sky_color": sky_color,
             "roughness": roughness.repeat(1, 3),
             "metalness": metalness.repeat(1, 3),
-            "albedo": albedo,
-            "shadows": shadows_all.repeat(1,3)})
+            "albedo": albedo})
+        if shadows is not None:
+            shadows_all = torch.zeros_like(roughness)
+            shadows_all[~sky_gaussians_mask] = shadows
+            render_extras.update({"shadows": shadows_all.repeat(1,3)})
 
     out_extras = {}
     for k in render_extras.keys():
