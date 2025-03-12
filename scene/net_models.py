@@ -7,11 +7,10 @@ from data.dataloader_net import load_train_test
 
 def init_weights(l):
         """The function intializes the weights of linear layers of a network
-            using xavier initialization.
+            using He initialization.
          """
         if isinstance(l, nn.Linear):
-            torch.nn.init.xavier_normal_(l.weight) 
-            l.bias.data.fill_(0.01)
+            torch.nn.init.kaiming_normal_(l.weight, mode='fan_in', nonlinearity='relu')
 
 
 class EmbeddingNet(nn.Module):
@@ -173,22 +172,28 @@ class MLPNet(nn.Module):
             nn.ReLU(),
         )
 
+
         self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
-                                         nn.ReLU(),
-                                         nn.Linear(self.dense_layer_size, self.sh_dim_envl*3))
+                                         nn.ReLU())
+        self.sh_envl_outlayer = nn.Linear(self.dense_layer_size, self.sh_dim_envl*3)
+
 
         self.sh_sky_layers = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
-                                         nn.ReLU(),
-                                         nn.Linear(self.dense_layer_size, self.sh_dim_sky*3))
+                                         nn.ReLU())
+        self.sh_sky_outlayer = nn.Linear(self.dense_layer_size, self.sh_dim_sky*3)
 
-        for linear_layer in [self.base, self.sh_envl_layers, self.sh_sky_layers]:
-             linear_layer.apply(init_weights)
+        #for linear_layer in [self.base, self.sh_envl_layers, self.sh_sky_layers]:
+         #    linear_layer.apply(init_weights)
 
 
     def forward(self, e):
         x = self.base(e)
-        sh_envl = self.sh_envl_layers(x).view(-1, self.sh_dim_envl, 3)
-        sh_sky = self.sh_sky_layers(x).view(-1, self.sh_dim_sky, 3)
+
+        sh_envl = self.sh_envl_layers(x)
+        sh_envl = self.sh_envl_outlayer(sh_envl).view(-1, self.sh_dim_envl, 3)
+
+        sh_sky = self.sh_sky_layers(x)
+        sh_sky = self.sh_sky_outlayer(sh_sky).view(-1, self.sh_dim_sky, 3)
 
         return sh_envl, sh_sky
 
@@ -208,14 +213,14 @@ class MLPNet(nn.Module):
         for _ in range(epochs):
             self.train()
             for batch in dataloader:
-                optim.zero_grad() 
                 input = batch[0].squeeze().cuda()
                 sh_target = batch[1].cuda()
                 sh_out, _ = self(input)
                 mse = loss_(sh_target, sh_out)
                 mse.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
-                optim.step() 
+                optim.step()
+                optim.zero_grad() 
 
 
 class SHMlp(nn.Module):
