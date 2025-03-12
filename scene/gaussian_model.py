@@ -240,7 +240,7 @@ class GaussianModel:
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
         # Initialize polar coordinates:
         self._sky_radius = nn.Parameter(torch.tensor(sky_distance, dtype=torch.float32, device="cuda").requires_grad_(True))
-        sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius.detach())
+        sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius)#.detach())
         self._sky_angles = nn.Parameter(torch.cat((torch.full((self._xyz.shape[0], 2), torch.inf, device="cuda"), sky_angles), dim=0).requires_grad_(True))
 
 
@@ -284,7 +284,7 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self._roughness], 'lr': training_args.roughness_lr, "name": "roughness"},
             {'params': [self._metalness], 'lr': training_args.metalness_lr, "name": "metalness"},
-            {'params': [self._sky_radius], 'lr': training_args.sky_radius_lr, "name": "sky_radius"},
+            #'params': [self._sky_radius], 'lr': training_args.sky_radius_lr, "name": "sky_radius"},
             {'params': [self._sky_angles], 'lr': training_args.position_lr_init*self.spatial_lr_scale, "name": "sky_angles"},
         ]
 
@@ -340,7 +340,7 @@ class GaussianModel:
         roughness = self._roughness.detach().cpu().numpy()
         metalness = self._metalness.detach().cpu().numpy()
         is_sky = self._is_sky.cpu().numpy()
-        sky_radius = self._sky_radius.repeat(xyz.shape[0],1).detach().cpu().numpy()
+        sky_radius = self._sky_radius.repeat(xyz.shape[0],1).cpu().numpy()
         sky_gauss_center = self._sky_gauss_center.repeat(xyz.shape[0],1).cpu().numpy()
         sky_angles = self._sky_angles.detach().cpu().numpy()
 
@@ -553,6 +553,7 @@ class GaussianModel:
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
         """
+        
         stds = self.get_scaling[selected_pts_mask].repeat(N,1) # (n,3)
         stds, sorted_idx = torch.sort(stds, dim=1, descending=True)
         stds = stds[:,:2]
@@ -564,6 +565,7 @@ class GaussianModel:
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1) # (n*N, 3, 3)
         rots = torch.gather(rots, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) +  self.get_xyz[selected_pts_mask].repeat(N, 1)
+
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_albedo = self._albedo[selected_pts_mask].repeat(N,1)
@@ -572,8 +574,8 @@ class GaussianModel:
         new_metalness = self._metalness[selected_pts_mask].repeat(N,1)
         new_is_sky = self._is_sky[selected_pts_mask].repeat(N,1)
         # Project sampled positions for sky Gaussians on the sphere
-        new_xyz[new_is_sky.squeeze()] = self._sky_gauss_center + self._sky_radius.detach() * (new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center)/torch.norm(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center, dim=1)[..., None]
-        new_sky_angles = torch.where(new_is_sky, cartesian_to_polar_coord(new_xyz, self._sky_gauss_center.squeeze(), self._sky_radius.detach()),
+        new_xyz[new_is_sky.squeeze()] = self._sky_gauss_center + self._sky_radius * (new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center)/torch.norm(new_xyz[new_is_sky.squeeze()] - self._sky_gauss_center, dim=1)[..., None]
+        new_sky_angles = torch.where(new_is_sky, cartesian_to_polar_coord(new_xyz, self._sky_gauss_center.squeeze(), self._sky_radius),
                                      self._sky_angles[selected_pts_mask].repeat(N,1))
     
         self.densification_postfix(new_xyz[~(new_is_sky.squeeze())], new_albedo, new_opacity, new_scaling, new_rotation, 
