@@ -68,8 +68,9 @@ def training(cfg, testing_iterations, saving_iterations):
         embedding_gt_image = model.embeddings(viewpoint_cam_id)
         #envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
         envlight_sh, sky_sh = model.mlp(embedding_gt_image)
+        envlight_sh_rand_noise = torch.randn_like(envlight_sh)*0.025
         # Get environment lighting object for the current training image
-        model.envlight.set_base(envlight_sh)
+        model.envlight.set_base(envlight_sh + envlight_sh_rand_noise)
         # Repeat for sky color
         # sky_sh = model.sky_sh_mlp(embedding_gt_image)
         #sky_sh = model.sky_sh_mlp(envlight_sh.flatten())
@@ -94,6 +95,7 @@ def training(cfg, testing_iterations, saving_iterations):
         # Additional reg
         loss_sky_brdf = l1_loss(diff_col, torch.zeros_like(diff_col), mask=1-sky_mask) + l1_loss(spec_col, torch.zeros_like(spec_col), mask=1-sky_mask)
         loss += 0.5 * loss_sky_brdf
+
 
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
@@ -316,11 +318,13 @@ if __name__ == "__main__":
     parser.add_argument("--reg_normal_from_iter", type=float, default=15_000)
     parser.add_argument("--reg_sky_gauss_depth_from_iter", type=float, default=0)
     parser.add_argument("--lambda_envlight", type=float, default=100)
-    parser.add_argument("--fix_sky", action="store_true")
+    parser.add_argument("--init_embeddings", action="store_true")
+    parser.add_argument("--init_sh_mlp", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
-        f"fix_sky={str(args.fix_sky)}",
+        f"init_embeddings={str(args.init_embeddings)}",
+        f"init_sh_mlp={str(args.init_sh_mlp)}",
         f"dataset.eval={str(args.eval)}",
         f"dataset.model_path={args.model_path}",
         f"dataset.source_path={args.source_path}",
