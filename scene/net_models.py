@@ -156,7 +156,7 @@ class EmbeddingNet(nn.Module):
 
 
 class MLPNet(nn.Module):
-    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 64):
+    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 128):
         super().__init__()
         self.sh_dim_envl = (sh_degree_envl + 1)**2
         self.sh_dim_sky = (sh_degree_sky + 1)**2
@@ -173,23 +173,24 @@ class MLPNet(nn.Module):
             nn.ReLU(),
         )
 
-        self.sh_all_envl = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
+        self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
                                          nn.ReLU(),
                                          nn.Linear(self.dense_layer_size, self.sh_dim_envl*3))
 
-        self.sh_all_sky = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
+        self.sh_sky_layers = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
                                          nn.ReLU(),
                                          nn.Linear(self.dense_layer_size, self.sh_dim_sky*3))
 
-        for linear_layer in [self.base, self.sh_all_envl, self.sh_all_sky]:
+        for linear_layer in [self.base, self.sh_envl_layers, self.sh_sky_layers]:
              linear_layer.apply(init_weights)
 
 
     def forward(self, e):
         x = self.base(e)
-        sh_coeffs_envl = self.sh_all_envl(x).view(-1, self.sh_dim_envl, 3)
-        sh_coeff_sky = self.sh_all_sky(x).view(-1, self.sh_dim_sky, 3)
-        return sh_coeffs_envl, sh_coeff_sky
+        sh_envl = self.sh_envl_layers(x).view(-1, self.sh_dim_envl, 3)
+        sh_sky = self.sh_sky_layers(x).view(-1, self.sh_dim_sky, 3)
+
+        return sh_envl, sh_sky
 
 
     def get_optimizer(self):
