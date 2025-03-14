@@ -6,7 +6,6 @@ init_sh_mlp: True
 embeddings_dim: 32
 load_iteration: None
 fix_sky: False
-use_shadows: False
 defaults:
   - optimizer: optimization_params.yaml
   - pipe: pipeline_params.yaml
