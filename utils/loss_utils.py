@@ -225,16 +225,18 @@ def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tens
     return envlight_loss
 
 
-def sh_loss(sh: torch.tensor, sh_degree, N_samples: int=10):
+def envl_sh_loss(sh_env: torch.tensor, sh_degree, N_samples: int=10):
 
-    viewing_dirs_unnorm = torch.empty(N_samples, 3, device=sh.device).uniform_(-1,1)
-    viewing_dirs_norm = viewing_dirs_unnorm/viewing_dirs_unnorm.norm(dim=1, keepdim=True)
+    shs_view = sh_env.repeat(N_samples, 1, 1)
+    view_dir_unnorm =torch.empty(shs_view.shape[0], 3, device=shs_view.device).uniform_(-1,1)
+    view_dir = view_dir_unnorm / view_dir_unnorm.norm(dim=1, keepdim=True)
+    envl_val = eval_sh(sh_degree, shs_view.transpose(1,2), view_dir)
 
-    sh2rgb = eval_sh(sh_degree, sh.transpose(0,1), viewing_dirs_norm)
+    #Constrain illumination values to R+
+    sh_envl_loss = penalize_outside_range(envl_val.view(-1), 0.0,torch.inf)
+    
+    return sh_envl_loss
 
-    sh_loss = penalize_outside_range(sh2rgb.view(-1), 0.0, 1)
-
-    return sh_loss
 
 
 def penalize_outside_range(tensor, lower_bound=0.0, upper_bound=1.0):

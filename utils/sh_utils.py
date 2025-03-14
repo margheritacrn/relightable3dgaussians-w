@@ -183,7 +183,7 @@ def gauss_weierstrass_kernel(roughness, sh_degree):
 def render_sh_map(sh, width: int = 600)->torch.tensor:
     """Render sh map given sh coefficients
         Args:
-        sh (torch.tensor, numpy.ndarray): sh coefficients of shape (sh_deg + 1)**2 x 3
+        sh (torch.tensor, numpy.ndarray): sh coefficients of shape [..., (sh_deg + 1)**2, 3]
         Returns:
         rendered sh map """
     if isinstance(sh, torch.Tensor):     
@@ -191,6 +191,7 @@ def render_sh_map(sh, width: int = 600)->torch.tensor:
     else:
         rendered_sh = torch.tensor(sh_render(sh, width = width))
     rendered_sh = torch.clamp(rendered_sh, 0, 1)
+
     return rendered_sh
 
 
