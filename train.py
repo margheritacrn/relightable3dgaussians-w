@@ -11,7 +11,7 @@
 import os
 import torch
 from random import randint
-from utils.loss_utils import l1_loss, ssim, depth_loss_gaussians, envlight_loss, min_scale_loss
+from utils.loss_utils import l1_loss, l2_loss, ssim, depth_loss_gaussians, envlight_loss, min_scale_loss, envl_sh_loss
 from gaussian_renderer import render
 import sys
 from utils.general_utils import safe_state, grad_thr_exp_scheduling
@@ -71,17 +71,8 @@ def training(cfg, testing_iterations, saving_iterations):
         envlight_sh_rand_noise = torch.randn_like(envlight_sh)*0.025
         # Get environment lighting object for the current training image
         model.envlight.set_base(envlight_sh + envlight_sh_rand_noise)
-        # Repeat for sky color
-        # sky_sh = model.sky_sh_mlp(embedding_gt_image)
-        #sky_sh = model.sky_sh_mlp(envlight_sh.flatten())
-        # Compute shadows
-        if cfg.use_shadows:
-            shadows = model.get_shadows(envlight_sh)
-        else:
-            shadows = None
 
-
-        render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, shadows, cfg.pipe, background, debug=False)
+        render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         diff_col, spec_col = render_pkg["diffuse_color"], render_pkg["specular_color"]
 
@@ -92,30 +83,22 @@ def training(cfg, testing_iterations, saving_iterations):
         loss = rec_loss
         logs =  {"Reconstruction loss": f"{rec_loss:.{7}f}"}
 
-        # Additional reg
+        # Sky Gaussians regularization
         loss_sky_brdf = l1_loss(diff_col, torch.zeros_like(diff_col), mask=1-sky_mask) + l1_loss(spec_col, torch.zeros_like(spec_col), mask=1-sky_mask)
         loss += 0.5 * loss_sky_brdf
-
 
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
             rendered_normal = render_pkg["normal"]*occluders_mask*sky_mask
             rendered_surf_normal = render_pkg["normal_ref"]*occluders_mask*sky_mask
-            normals_prod_mask = ~((rendered_normal == 0).all(dim=0) & (rendered_surf_normal == 0).all(dim=0))
-            normals_prod = rendered_normal*rendered_surf_normal#.detach()
-            normal_consistency_loss =  (1 - (normals_prod[:,normals_prod_mask]).sum(dim=0))[None]
-            normal_consistency_loss = cfg.optimizer.lambda_normal*(normal_consistency_loss).mean()
+            normal_consistency_loss =  (1 - (rendered_normal*rendered_surf_normal).sum(dim=0))[None]
+            normal_consistency_loss = cfg.optimizer.lambda_normal * (normal_consistency_loss).mean()
             loss += normal_consistency_loss
             logs.update({"Normal loss": f"{normal_consistency_loss:.{5}f}"})
 
         # Envlight regularization
-        if cfg.optimizer.lambda_envlight > 0:
-            dir_pp = (model.gaussians.get_xyz - viewpoint_cam.camera_center.repeat(model.gaussians.get_opacity.shape[0], 1))
-            dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
-            with torch.no_grad():
-                normals = model.gaussians.get_normal(dir_pp_normalized=dir_pp_normalized)
-                normals = normals[~model.gaussians.get_is_sky.squeeze()]
-            envl_loss = cfg.optimizer.lambda_envlight * envlight_loss(envlight_sh.squeeze(), model.envlight.get_shdegree, normals)
+        if cfg.optimizer.lambda_envlight > 0:         
+            envl_loss = envl_sh_loss(envlight_sh, cfg.envlight_sh_degree)
             loss += envl_loss
             logs.update({"Envlight loss": f"{envl_loss:.{5}f}"})
 
@@ -233,15 +216,8 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         viewpoint_cam_id = torch.tensor([viewpoint.uid], device = 'cuda')
                         embedding_gt_image = model.embeddings(viewpoint_cam_id)
                         envlight_sh, sky_sh = model.mlp(embedding_gt_image)
-                        #envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
-                        # sky_sh = model.sky_sh_mlp(embedding_gt_image)
-                        #sky_sh = model.sky_sh_mlp(envlight_sh.flatten())
                         model.envlight.set_base(envlight_sh)
-                        if model.config.use_shadows:
-                            shadows = model.get_shadows(envlight_sh)
-                        else:
-                            shadows = None
-                        render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, sky_sh, renderArgs["sky_sh_degree"], shadows, renderArgs["pipe"],
+                        render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, sky_sh, renderArgs["sky_sh_degree"], renderArgs["pipe"],
                                                 renderArgs["background"], debug=renderArgs["debug"], fix_sky=renderArgs["fix_sky"])
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
                         images.append(image)
