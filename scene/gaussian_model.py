@@ -58,8 +58,6 @@ class GaussianModel:
         self.default_albedo = 1.0
         self.default_metalness = 0.1
 
-        self.sky_angles_activation = torch.sigmoid
-
 
         self.optimizer = None
 
@@ -233,14 +231,14 @@ class GaussianModel:
 
         return points[gmask], sky_distance, scene_center
 
-
+    @torch.no_grad()
     def augment_with_sky_gaussians(self, cameras):
         sky_xyz, sky_distance, sky_gauss_center = self.get_sky_xyz_init(cameras)
         self._sky_gauss_center = sky_gauss_center
         print(f"Adding {sky_xyz.shape[0]} sky Gaussians")
         # Initialize polar coordinates:
-        self._sky_radius = nn.Parameter(torch.tensor(sky_distance, dtype=torch.float32, device="cuda").requires_grad_(True))
-        sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius)#.detach())
+        self._sky_radius = nn.Parameter(torch.tensor(sky_distance, dtype=torch.float32, device="cuda", requires_grad=True))
+        sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius)
         self._sky_angles = nn.Parameter(torch.cat((torch.full((self._xyz.shape[0], 2), torch.inf, device="cuda"), sky_angles), dim=0).requires_grad_(True))
 
 
@@ -284,7 +282,7 @@ class GaussianModel:
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
             {'params': [self._roughness], 'lr': training_args.roughness_lr, "name": "roughness"},
             {'params': [self._metalness], 'lr': training_args.metalness_lr, "name": "metalness"},
-            #'params': [self._sky_radius], 'lr': training_args.sky_radius_lr, "name": "sky_radius"},
+            {'params': [self._sky_radius], 'lr': training_args.sky_radius_lr, "name": "sky_radius"},
             {'params': [self._sky_angles], 'lr': training_args.position_lr_init*self.spatial_lr_scale, "name": "sky_angles"},
         ]
 
@@ -340,7 +338,7 @@ class GaussianModel:
         roughness = self._roughness.detach().cpu().numpy()
         metalness = self._metalness.detach().cpu().numpy()
         is_sky = self._is_sky.cpu().numpy()
-        sky_radius = self._sky_radius.repeat(xyz.shape[0],1).cpu().numpy()
+        sky_radius = self._sky_radius.repeat(xyz.shape[0],1).detach().cpu().numpy()
         sky_gauss_center = self._sky_gauss_center.repeat(xyz.shape[0],1).cpu().numpy()
         sky_angles = self._sky_angles.detach().cpu().numpy()
 
@@ -420,7 +418,7 @@ class GaussianModel:
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp", "mlp"]:
+            if group["name"] in ["sky_sh", "mlp", "embeddings", "sky_radius"]:
                 continue
             if group["name"] == name:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
@@ -438,7 +436,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask, mask_xyz):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp", "mlp"]:
+            if group["name"] in ["sky_sh", "mlp", "embeddings", "sky_radius"]:
                 continue
             if group["name"] == "xyz":
                 mask_prune = mask_xyz
@@ -485,7 +483,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"]in ["sky_sh", "envlight_sh", "embeddings", "sky_radius", "shadow_mlp", "mlp"]:
+            if group["name"]in ["sky_sh", "mlp", "embeddings", "sky_radius"]:
                 continue
             assert len(group["params"]) == 1
             extension_tensor = tensors_dict[group["name"]]
@@ -565,7 +563,6 @@ class GaussianModel:
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1) # (n*N, 3, 3)
         rots = torch.gather(rots, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) +  self.get_xyz[selected_pts_mask].repeat(N, 1)
-
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_albedo = self._albedo[selected_pts_mask].repeat(N,1)
