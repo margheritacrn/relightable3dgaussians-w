@@ -55,12 +55,23 @@ def process_environment_map_jpg(img_path, scale_high=10, threshold=0.999):
     return coeffs
 
 
-def save_reconstructed_envmap_sh(envmap_sh, save_name):
+def create_video_for_envmap(output_path, envs):
+    rendered_envs = []
+    for env in envs:
+        rendered_sh_env = sh_utility.sh_render(env, width=600)
+        rendered_sh_env = torch.tensor(rendered_sh_env**(1/ 2.2))
+        rendered_sh_env = np.array(rendered_sh_env*255).clip(0,255).astype(np.uint8)
+        rendered_envs.append(rendered_sh_env)
+    clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(rendered_envs, fps=30)
+    clip.write_videofile(os.path.join(output_path, 'rot_envmap.mp4'))
+
+
+def save_reconstructed_envmap_sh(envmap_sh, outpath):
     render_sh_envmap = sh_utility.sh_render(envmap_sh, width = 360)
-    render_sh_envmap = (render_sh_envmap - render_sh_envmap.min()) / (render_sh_envmap.max() - render_sh_envmap.min()) * 255
-    render_sh_envmap = render_sh_envmap.astype(np.uint8)
+    render_sh_envmap = torch.tensor(render_sh_envmap**(1/ 2.2))
+    render_sh_envmap = np.array(render_sh_envmap*255).clip(0,255).astype(np.uint8)
     render_sh_envmap = Image.fromarray(render_sh_envmap)
-    render_sh_envmap.save(save_name)
+    render_sh_envmap.save(outpath)
 
 
 def render_single_and_relight(cfg, envmap_path=None, rot_angle_x=-np.pi/2, mask_sky=False):
@@ -78,77 +89,68 @@ def render_single_and_relight(cfg, envmap_path=None, rot_angle_x=-np.pi/2, mask_
         relits_path = os.path.join(cfg.dataset.model_path, "novel_view_relighting", "iteration_{}".format(model.load_iteration), test_camera.image_name)
         makedirs(relits_path, exist_ok=True)
 
-        # render
+        # Render
         if envmap_path != "":
             relits_ext_envmap_path = os.path.join(relits_path, "external_envmap_" + os.path.basename(envmap_path)[:-4])
             makedirs(relits_ext_envmap_path, exist_ok=True)
-            skylight_sh = None
+            sky_sh = None
             if envmap_path[-4:] == ".exr":
                 envmap_sh = process_environment_map_exr(envmap_path)
             elif envmap_path[-4:] == ".jpg":
                 envmap_sh = process_environment_map_jpg(envmap_path)
             else:
                 envmap_sh = np.load(os.path.join(cfg.dataset.model_path, "train", "iteration_40000", "rendered_envlights", envmap_path))
-                skylight_sh = np.load(os.path.join(cfg.dataset.model_path, "train", "iteration_40000", "rendered_skylights", envmap_path))
+                sky_sh = np.load(os.path.join(cfg.dataset.model_path, "train", "iteration_40000", "rendered_sky_maps", envmap_path))
                 rot_angle_x = 0
             
             save_reconstructed_envmap_sh(envmap_sh, os.path.join(relits_ext_envmap_path, "external_reconstructed" + os.path.basename(envmap_path)[:-4] + ".png"))
             envmap_sh_rot_around_x = spaudiopy.sph.rotate_sh(envmap_sh.T, 0, 0,rot_angle_x, 'real')
             envmaps_sh_rot_around_x_torch = torch.tensor(envmap_sh_rot_around_x.T, dtype=torch.float32, device="cuda")
             envmap_sh_torch = torch.tensor(envmap_sh, dtype=torch.float32, device="cuda")
-            if skylight_sh is not None:
-                skylight_sh_torch = torch.tensor(skylight_sh, dtype=torch.float32, device="cuda")
-            # render with no rotation around x-axis
+            if sky_sh is not None:
+                sky_sh = torch.tensor(sky_sh, dtype=torch.float32, device="cuda")
+            # Render with no rotation around x-axis
             model.envlight.set_base(envmap_sh_torch)
-            model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
-            if skylight_sh is not None:
-                 model.skylight.set_base(skylight_sh_torch)
-            render_pkg = render(test_camera, model.gaussians, model.envlight,model.skylight, cfg.pipe, background, debug=False, fix_sky=cfg.fix_sky)
+            render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=False)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
             torchvision.utils.save_image(render_pkg["render"], os.path.join(relits_ext_envmap_path, "relit_external_" + os.path.basename(envmap_path)[:-4] + ".png"))
-            # render with rotation around x-axis 
+            # Render with rotation around x-axis 
             model.envlight.set_base(envmaps_sh_rot_around_x_torch)
-            model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
-            if skylight_sh is not None:
-                 model.skylight.set_base(skylight_sh_torch)
-            render_pkg = render(test_camera, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False, fix_sky=cfg.fix_sky)
+            render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=False)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
             torchvision.utils.save_image(render_pkg["render"], os.path.join(relits_ext_envmap_path, "relit_external_rotated_x_" + os.path.basename(envmap_path)[:-4] + ".png"))
-            # save
+            # Save
             save_reconstructed_envmap_sh(envmap_sh_rot_around_x.T, os.path.join(relits_ext_envmap_path, "external_rotated_x_reconstructed" + os.path.basename(envmap_path)[:-4] + ".png"))
-            # render with N rotations of the environment map around the y axis sampled in [0,2pi]:
+            # Render with N rotations of the environment map around the y axis sampled in [0,2pi]:
             steps = 30
             line_points = np.linspace(0, 1, steps)
             angle_start = 0
             angle_end = 3.14*2
             sun_angles = np.interp(line_points, [0, 1], [angle_start, angle_end])
+            rot_envs = []
             for num, angle in enumerate(tqdm(sun_angles)):
-                # rotate envmap and render
+                # Rotate envmap and render
                 envmap_sh_rot = spaudiopy.sph.rotate_sh(envmap_sh.T, 0, 0,rot_angle_x, 'real')
                 envmap_sh_rot = spaudiopy.sph.rotate_sh(envmap_sh_rot, 0, angle, 0, 'real')
-                if skylight_sh is not None:
-                    skylight_sh_rot = spaudiopy.sph.rotate_sh(skylight_sh.T, 0, angle, 0, 'real')
+                rot_envs.append(envmap_sh_rot.T)
 
                 if num == 0 or num == len(sun_angles)-1: 
                     save_reconstructed_envmap_sh(envmap_sh_rot.T, os.path.join(relits_ext_envmap_path, f"rotated_{num}_reconstructed" + ".png"))
 
                 envmap_sh_rot_torch = torch.tensor(envmap_sh_rot.T, dtype=torch.float32, device="cuda")
-                skylight_sh_torch = torch.tensor(skylight_sh_rot.T, dtype=torch.float32, device="cuda")
                 model.envlight.set_base(envmap_sh_rot_torch)
-                model.skylight.set_base(torch.zeros((9,3), dtype=torch.float32, device="cuda"))
-                if skylight_sh is not None:
-                    model.skylight.set_base(skylight_sh_torch)
-                render_pkg = render(test_camera, model.gaussians, model.envlight, model.skylight, cfg.pipe, background, debug=False, fix_sky=cfg.fix_sky)
+                sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
+                render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
                 if mask_sky:
                     render_pkg["render"] = render_pkg["render"]*sky_mask
                 render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
                 torchvision.utils.save_image(render_pkg["render"], os.path.join(relits_ext_envmap_path, str(num) + ".png"))
 
-            # generate video
+            # Generate videos
             image_files = [os.path.join(relits_ext_envmap_path ,str(num) + ".png") for num in range(0, len(sun_angles)) ]
-            # image_files = [os.path.join(relits_ext_envmap_path ,img) for img in os.listdir(relits_ext_envmap_path) if (img.endswith(".png") and "external" not in img and "reconstructed" not in img)]
             clip = moviepy.video.io.ImageSequenceClip.ImageSequenceClip(image_files, fps=30)
             clip.write_videofile(os.path.join(relits_ext_envmap_path , 'relit_novel_view_external_envmap_rots.mp4'))
+            create_video_for_envmap(relits_ext_envmap_path, rot_envs)
 
 
 
@@ -161,7 +163,7 @@ def main(cfg: DictConfig):
 
 if __name__ == "__main__":
     # Set up command line argument parser
-    parser = ArgumentParser(description="Rendering script parameters")
+    parser = ArgumentParser(description="Script parameters")
     parser.add_argument("--source_path", "-s", type=str)
     parser.add_argument("--model_path", "-m", type=str)
     parser.add_argument("--iteration", default=-1, type=int)
