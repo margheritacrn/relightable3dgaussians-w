@@ -182,17 +182,15 @@ class MLPNet(nn.Module):
                                          nn.ReLU())
         self.sh_sky_outlayer = nn.Linear(self.dense_layer_size, self.sh_dim_sky*3)
 
-        #for linear_layer in [self.base, self.sh_envl_layers, self.sh_sky_layers]:
-         #    linear_layer.apply(init_weights)
 
 
     def forward(self, e):
-        x = self.base(e)
+        base_features = self.base(e)
 
-        sh_envl = self.sh_envl_layers(x)
+        sh_envl = self.sh_envl_layers(base_features)
         sh_envl = self.sh_envl_outlayer(sh_envl).view(-1, self.sh_dim_envl, 3)
 
-        sh_sky = self.sh_sky_layers(x)
+        sh_sky = self.sh_sky_layers(base_features)
         sh_sky = self.sh_sky_outlayer(sh_sky).view(-1, self.sh_dim_sky, 3)
 
         return sh_envl, sh_sky
@@ -220,114 +218,7 @@ class MLPNet(nn.Module):
                 mse.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
                 optim.step()
-                optim.zero_grad() 
-
-
-class SHMlp(nn.Module):
-    """
-    The MLP takes as input an image embedding vector and returns SH coefficients representing
-    the environment light.
-    """
-    def __init__(self, sh_degree: int = 4, embedding_dim: int = 32, dense_layer_size: int = 64):
-        super().__init__()
-        self.sh_dim = (sh_degree + 1)**2
-        self.embedding_dim = embedding_dim
-        self.dense_layer_size = dense_layer_size
-        self.optimizer = torch.optim.Adam
-
-
-        self.mlp = nn.Sequential(
-            nn.Linear(self.embedding_dim, self.dense_layer_size),
-            nn.Dropout(p=0.2),
-            nn.ReLU(), 
-            nn.Linear(self.dense_layer_size, self.dense_layer_size),
-            nn.ReLU(),
-            nn.Linear(self.dense_layer_size, self.dense_layer_size),
-            nn.ReLU()
-        )
-
-        self.sh_base = nn.Linear(self.dense_layer_size, 3)
-        self.sh_rest = nn.Linear(self.dense_layer_size, (self.sh_dim - 1) * 3)
-        self.sh_all = nn.Linear(self.dense_layer_size, self.sh_dim*3)
-        # zero initialization for rest sh linear layers
-        self.sh_rest.weight.data.zero_()
-        self.sh_rest.bias.data.zero_()
-
-        for linear_layer in [self.mlp, self.sh_all, self.sh_base]:
-             linear_layer.apply(init_weights)
-
-
-    def forward(self, e, sh_all=True):
-        x = self.mlp(e)
-        if sh_all:
-            sh_coeffs = self.sh_all(x).view(-1, self.sh_dim, 3)
-        else:
-            sh_base = self.sh_base(x)
-            sh_rest = self.sh_rest(x)
-            sh_coeffs = torch.cat([sh_base, sh_rest], dim=-1).view(-1, self.sh_dim, 3)
-        return sh_coeffs
-
-
-    def get_optimizer(self):
-        return self.optimizer(self.parameters(), lr=0.002)
-    
-
-    def save_weights(self, path: str, epoch: int):
-        torch.save(self.state_dict(), path + "/SHMlp_model_epoch_"+str(epoch)+".pth")
-
-
-    def initialize(self, dataloader, epochs, optim=None):
-        if optim is None:
-            optim = self.get_optimizer()
-        loss_ = torch.nn.MSELoss()
-        for epoch in range(epochs):
-            self.train()
-            for batch in dataloader:
-                optim.zero_grad() 
-                input = batch[0].squeeze().cuda()
-                sh_target = batch[1].cuda()
-                sh_out = self(input)
-                mse = loss_(sh_target, sh_out)
-                mse.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
-                optim.step() 
-
-
-class ShadowMlp(nn.Module):
-    """
-    #TODO: add doc
-    """
-    def __init__(self, input_dim: int , dense_layer_size: int = 128):
-        super().__init__()
-        self.input_dim = input_dim
-        self.dense_layer_size = dense_layer_size
-        self.optimizer = torch.optim.Adam
-
-
-        self.mlp = nn.Sequential(
-            nn.Linear(self.input_dim, self.dense_layer_size),
-            nn.ReLU(), 
-            nn.Linear(self.dense_layer_size, self.dense_layer_size),
-            nn.ReLU(),
-            nn.Linear(self.dense_layer_size, 1),
-            nn.Sigmoid()
-        )
-
-        for linear_layer in [self.mlp]:
-             linear_layer.apply(init_weights)
-
-
-    def forward(self, envlight_sh, pos):  # Nx3x9, Nx1, Nx3
-        input = torch.cat((envlight_sh, pos), dim=-1)
-        return self.mlp(input) # N x 1
-
-
-    def get_optimizer(self):
-        return self.optimizer(self.parameters(), lr=0.002)
-    
-
-    def save_weights(self, path: str, epoch: int):
-        torch.save(self.state_dict(), path + "/ShadowMlp_model_epoch_"+str(epoch)+".pth")
+                optim.zero_grad()
 
 
 
