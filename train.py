@@ -66,7 +66,6 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Get SH coefficients of environment lighting for current training image
         embedding_gt_image = model.embeddings(viewpoint_cam_id)
-        #envlight_sh = model.envlight_sh_mlp(embedding_gt_image)
         envlight_sh, sky_sh = model.mlp(embedding_gt_image)
         envlight_sh_rand_noise = torch.randn_like(envlight_sh)*0.025
         # Get environment lighting object for the current training image
