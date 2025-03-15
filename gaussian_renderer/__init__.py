@@ -135,8 +135,8 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
     # Compute color for the foreground Gaussians
     color_fg_gaussians, brdf_pkg = get_shaded_colors(envlight=envlight, pos=positions[~sky_gaussians_mask],
                                                           view_pos=view_pos[~sky_gaussians_mask], normal=normal[~sky_gaussians_mask],
-                                                          albedo=albedo[~sky_gaussians_mask],
-                                                          roughness=roughness[~sky_gaussians_mask], metalness=metalness[~sky_gaussians_mask],
+                                                          albedo=albedo,
+                                                          roughness=roughness, metalness=metalness,
                                                           specular=specular)
     colors_precomp[~sky_gaussians_mask] = color_fg_gaussians.squeeze()
 
@@ -186,16 +186,23 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
     render_extras.update({"depth": depth})
 
 
-    normal = 0.5*normal + 0.5 # range (-1, 1) -> (0, 1)
+    normal = 0.5 * normal + 0.5 # range (-1, 1) -> (0, 1)
     normal[sky_gaussians_mask] = 1
     render_extras.update({"normal": normal})
 
     if debug:
+        roughness_all = torch.zeros((positions.shape[0], 1), device="cuda", dtype=torch.float32)
+        roughness_all[~sky_gaussians_mask] = roughness
+        metalness_all = torch.zeros((positions.shape[0], 1), device="cuda", dtype=torch.float32)
+        metalness_all[~sky_gaussians_mask] = metalness
+        albedo_all = torch.ones_like(positions)
+        albedo_all[~sky_gaussians_mask] = albedo
+
         render_extras.update({
             "sky_color": sky_color,
-            "roughness": roughness.repeat(1, 3),
-            "metalness": metalness.repeat(1, 3),
-            "albedo": albedo})
+            "roughness": roughness_all.repeat(1, 3),
+            "metalness": metalness_all.repeat(1, 3),
+            "albedo": albedo_all})
 
     out_extras = {}
     for k in render_extras.keys():
@@ -245,10 +252,10 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
 
     # Get surface normal from depth map.
     # out_extras["normal_ref"] = render_surf_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color= bg_color, alpha=out_extras['alpha'][0])
-    out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, out_extras['depth'][0].unsqueeze(0))
+    out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, (out_extras['depth'][0] * (viewpoint_camera.sky_mask.cuda().squeeze())).unsqueeze(0))
     out_extras["normal_ref"] = out_extras["normal_ref"].permute(2,0,1)
     out_extras["normal_ref"] = (out_extras["normal_ref"] * (out_extras["alpha"]).detach())
-    out_extras["normal_ref"] = out_extras["normal_ref"] * (viewpoint_camera.sky_mask.cuda().squeeze()) + torch.ones_like(out_extras["normal_ref"]) * (1-viewpoint_camera.sky_mask.cuda().squeeze())
+    out_extras["normal_ref"] = out_extras["normal_ref"]  + torch.ones_like(out_extras["normal_ref"]) * (1-viewpoint_camera.sky_mask.cuda().squeeze())
     normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
     out.update(out_extras)
     return out
