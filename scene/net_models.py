@@ -155,7 +155,7 @@ class EmbeddingNet(nn.Module):
 
 
 class MLPNet(nn.Module):
-    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 128):
+    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 256):
         super().__init__()
         self.sh_dim_envl = (sh_degree_envl + 1)**2
         self.sh_dim_sky = (sh_degree_sky + 1)**2
@@ -170,28 +170,25 @@ class MLPNet(nn.Module):
             nn.ReLU(), 
             nn.Linear(self.dense_layer_size, self.dense_layer_size),
             nn.ReLU(),
+            nn.Linear(self.dense_layer_size, self.dense_layer_size // 2),
+            nn.ReLU(),
         )
 
+        
+        self.sh_sky_outlayer = nn.Linear(self.dense_layer_size // 2, self.sh_dim_sky*3)
 
-        self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
+        self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size // 2, self.dense_layer_size // 2),
                                          nn.ReLU())
-        self.sh_envl_outlayer = nn.Linear(self.dense_layer_size, self.sh_dim_envl*3)
-
-
-        self.sh_sky_layers = nn.Sequential(nn.Linear(self.dense_layer_size, self.dense_layer_size),
-                                         nn.ReLU())
-        self.sh_sky_outlayer = nn.Linear(self.dense_layer_size, self.sh_dim_sky*3)
-
+        self.sh_envl_outlayer = nn.Linear(self.dense_layer_size // 2, self.sh_dim_envl*3)
 
 
     def forward(self, e):
         base_features = self.base(e)
+        
+        sh_sky = self.sh_sky_outlayer(base_features).view(-1, self.sh_dim_sky, 3)
 
         sh_envl = self.sh_envl_layers(base_features)
         sh_envl = self.sh_envl_outlayer(sh_envl).view(-1, self.sh_dim_envl, 3)
-
-        sh_sky = self.sh_sky_layers(base_features)
-        sh_sky = self.sh_sky_outlayer(sh_sky).view(-1, self.sh_dim_sky, 3)
 
         return sh_envl, sh_sky
 
