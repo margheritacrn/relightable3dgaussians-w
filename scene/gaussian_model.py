@@ -54,7 +54,7 @@ class GaussianModel:
 
 
         self.material_properties_activation = torch.sigmoid
-        self.default_roughness = 0.6
+        self.default_roughness = 1.0
         self.default_albedo = 1.0
         self.default_metalness = 0.1
 
@@ -401,8 +401,8 @@ class GaussianModel:
 
         roughness = np.asarray(plydata.elements[0]["roughness"])[..., np.newaxis]
         metalness = np.asarray(plydata.elements[0]["metalness"])[..., np.newaxis]
-    
-        is_sky = np.asarray(plydata.elements[0]["is_sky"])[..., np.newaxis]
+        
+        is_sky = np.asarray(plydata.elements[0]["is_sky"], dtype=bool)[..., np.newaxis]
         
         sky_radius = np.asarray(plydata.elements[0]["sky_radius"])[0]
         sky_gauss_center_names = [p.name for p in plydata.elements[0].properties if p.name.startswith("sky_gauss_center_")]
@@ -418,16 +418,16 @@ class GaussianModel:
         xyz = xyz[is_sky.squeeze() == 0]
 
         self._xyz = nn.Parameter(torch.tensor(xyz, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._albedo = nn.Parameter(torch.tensor(albedo[~is_sky], dtype=torch.float, device="cuda").requires_grad_(True))
+        self._albedo = nn.Parameter(torch.tensor(albedo[~(is_sky.squeeze())], dtype=torch.float, device="cuda").requires_grad_(True))
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
-        self._roughness = nn.Parameter(torch.tensor(roughness[~is_sky], dtype=torch.float, device="cuda").requires_grad_(True))
-        self._metalness = nn.Parameter(torch.tensor(metalness[~is_sky], dtype=torch.float, device="cuda").requires_grad_(True))
+        self._roughness = nn.Parameter(torch.tensor(roughness[~(is_sky.squeeze())], dtype=torch.float, device="cuda").requires_grad_(True))
+        self._metalness = nn.Parameter(torch.tensor(metalness[~(is_sky.squeeze())], dtype=torch.float, device="cuda").requires_grad_(True))
         self._is_sky = torch.tensor(is_sky, dtype=torch.bool, device="cuda")
         self._sky_radius = nn.Parameter(torch.tensor(sky_radius, dtype=torch.float, device="cuda").requires_grad_(True))
         self._sky_gauss_center = nn.Parameter(torch.tensor(sky_gauss_center, dtype=torch.float, device="cuda"))
-        self._sky_angles = torch.tensor(sky_angles[is_sky], dtype=torch.float, device="cuda")
+        self._sky_angles = torch.tensor(sky_angles[is_sky.squeeze()], dtype=torch.float, device="cuda")
 
 
     def replace_tensor_to_optimizer(self, tensor, name):
