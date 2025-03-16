@@ -11,7 +11,7 @@
 import os
 from argparse import ArgumentParser
 
-nerfosr_scenes = ["lk2"]#, "lwp", "st"]
+nerfosr_scenes = ["lk2", "lwp", "st"]
 
 parser = ArgumentParser(description="Full evaluation script parameters")
 parser.add_argument('--nerfosr', "-osr", required=True, type=str)
