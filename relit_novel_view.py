@@ -85,6 +85,7 @@ def render_single_and_relight(cfg, envmap_path=None, rot_angle_x=-np.pi/2, mask_
         test_camera = [c for c in model.scene.getTestCameras() if c.image_name == tmp][0]
         if mask_sky:
             sky_mask = test_camera.sky_mask.cuda()
+        fix_sky = True
 
         relits_path = os.path.join(cfg.dataset.model_path, "novel_view_relighting", "iteration_{}".format(model.load_iteration), test_camera.image_name)
         makedirs(relits_path, exist_ok=True)
@@ -102,6 +103,7 @@ def render_single_and_relight(cfg, envmap_path=None, rot_angle_x=-np.pi/2, mask_
                 envmap_sh = np.load(os.path.join(cfg.dataset.model_path, "train", "iteration_40000", "rendered_envlights", envmap_path))
                 sky_sh = np.load(os.path.join(cfg.dataset.model_path, "train", "iteration_40000", "rendered_sky_maps", envmap_path))
                 rot_angle_x = 0
+                fix_sky = False
             
             save_reconstructed_envmap_sh(envmap_sh, os.path.join(relits_ext_envmap_path, "external_reconstructed" + os.path.basename(envmap_path)[:-4] + ".png"))
             envmap_sh_rot_around_x = spaudiopy.sph.rotate_sh(envmap_sh.T, 0, 0,rot_angle_x, 'real')
@@ -111,12 +113,12 @@ def render_single_and_relight(cfg, envmap_path=None, rot_angle_x=-np.pi/2, mask_
                 sky_sh = torch.tensor(sky_sh, dtype=torch.float32, device="cuda")
             # Render with no rotation around x-axis
             model.envlight.set_base(envmap_sh_torch)
-            render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=False)
+            render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=fix_sky)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
             torchvision.utils.save_image(render_pkg["render"], os.path.join(relits_ext_envmap_path, "relit_external_" + os.path.basename(envmap_path)[:-4] + ".png"))
             # Render with rotation around x-axis 
             model.envlight.set_base(envmaps_sh_rot_around_x_torch)
-            render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=False)
+            render_pkg = render(test_camera, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=fix_sky)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
             torchvision.utils.save_image(render_pkg["render"], os.path.join(relits_ext_envmap_path, "relit_external_rotated_x_" + os.path.basename(envmap_path)[:-4] + ".png"))
             # Save
