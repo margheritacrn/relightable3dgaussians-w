@@ -524,3 +524,19 @@ def gamma_correction(rgb: torch.Tensor, gamma=2.2):
     rgb = rgb.clamp(min=0.0, max=1.0) + 1e-4
     rgb = rgb.pow(1. / gamma)
     return rgb
+
+
+def linear_to_srgb(linear):
+    if isinstance(linear, torch.Tensor):
+        """Assumes `linear` is in [0, 1], see https://en.wikipedia.org/wiki/SRGB."""
+        eps = torch.finfo(torch.float32).eps
+        srgb0 = 323 / 25 * linear
+        srgb1 = (211 * torch.clamp(linear, min=eps)**(5 / 12) - 11) / 200
+        return torch.where(linear <= 0.0031308, srgb0, srgb1)
+    elif isinstance(linear, np.ndarray):
+        eps = np.finfo(np.float32).eps
+        srgb0 = 323 / 25 * linear
+        srgb1 = (211 * np.maximum(eps, linear) ** (5 / 12) - 11) / 200
+        return np.where(linear <= 0.0031308, srgb0, srgb1)
+    else:
+        raise NotImplementedError
