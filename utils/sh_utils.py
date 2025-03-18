@@ -158,7 +158,7 @@ def SH2RGB(sh):
     return sh * C0 + 0.5
 
 
-def gauss_weierstrass_kernel(roughness, sh_degree):
+def gauss_kernel(roughness, sh_degree):
     """The function computes the sh_dim coefficients of
     Gauss Weierstrass kernel for smoothing in SH domain. The smoothing 
     strenght is proportional to the roughness.

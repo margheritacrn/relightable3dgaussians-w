@@ -13,6 +13,69 @@ def init_weights(l):
             torch.nn.init.kaiming_normal_(l.weight, mode='fan_in', nonlinearity='relu')
 
 
+class MLPNet(nn.Module):
+    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 256):
+        super().__init__()
+        self.sh_dim_envl = (sh_degree_envl + 1)**2
+        self.sh_dim_sky = (sh_degree_sky + 1)**2
+        self.embedding_dim = embedding_dim
+        self.dense_layer_size = dense_layer_size
+        self.optimizer = torch.optim.Adam
+
+
+        self.base = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.dense_layer_size),
+            nn.Dropout(p=0.2),
+            nn.ReLU(), 
+            nn.Linear(self.dense_layer_size, self.dense_layer_size),
+            nn.ReLU(),
+            nn.Linear(self.dense_layer_size, self.dense_layer_size // 2),
+            nn.ReLU(),
+        )
+
+        
+        self.sh_sky_layers = nn.Linear(self.dense_layer_size // 2, self.sh_dim_sky*3)
+
+        self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size // 2, self.dense_layer_size // 2),
+                                         nn.ReLU(),
+                                         nn.Linear(self.dense_layer_size // 2, self.sh_dim_envl*3))
+
+
+    def forward(self, e):
+        base_features = self.base(e)
+        
+        sh_sky = self.sh_sky_layers(base_features).view(-1, self.sh_dim_sky, 3)
+
+        sh_envl = self.sh_envl_layers(base_features).view(-1, self.sh_dim_envl, 3)
+
+        return sh_envl, sh_sky
+
+
+    def get_optimizer(self):
+        return self.optimizer(self.parameters(), lr=0.002)
+    
+
+    def save_weights(self, path: str, epoch: int):
+        torch.save(self.state_dict(), path + "/MLPNet_epoch_"+str(epoch)+".pth")
+
+
+    def initialize_sh_envl(self, dataloader, epochs, optim=None):
+        if optim is None:
+            optim = self.get_optimizer()
+        loss_ = torch.nn.MSELoss()
+        for _ in range(epochs):
+            self.train()
+            for batch in dataloader:
+                input = batch[0].squeeze().cuda()
+                sh_target = batch[1].cuda()
+                sh_out, _ = self(input)
+                mse = loss_(sh_target, sh_out)
+                mse.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
+                optim.step()
+                optim.zero_grad()
+
+
 class EmbeddingNet(nn.Module):
     """
     The network is a convolutional autoencoder.
@@ -152,70 +215,6 @@ class EmbeddingNet(nn.Module):
                    'data_transforms': data_transforms
                    }
             return out
-
-
-class MLPNet(nn.Module):
-    def __init__(self, sh_degree_envl: int = 4, sh_degree_sky: int =1, embedding_dim: int = 32, dense_layer_size: int = 256):
-        super().__init__()
-        self.sh_dim_envl = (sh_degree_envl + 1)**2
-        self.sh_dim_sky = (sh_degree_sky + 1)**2
-        self.embedding_dim = embedding_dim
-        self.dense_layer_size = dense_layer_size
-        self.optimizer = torch.optim.Adam
-
-
-        self.base = nn.Sequential(
-            nn.Linear(self.embedding_dim, self.dense_layer_size),
-            nn.Dropout(p=0.2),
-            nn.ReLU(), 
-            nn.Linear(self.dense_layer_size, self.dense_layer_size),
-            nn.ReLU(),
-            nn.Linear(self.dense_layer_size, self.dense_layer_size // 2),
-            nn.ReLU(),
-        )
-
-        
-        self.sh_sky_outlayer = nn.Linear(self.dense_layer_size // 2, self.sh_dim_sky*3)
-
-        self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size // 2, self.dense_layer_size // 2),
-                                         nn.ReLU())
-        self.sh_envl_outlayer = nn.Linear(self.dense_layer_size // 2, self.sh_dim_envl*3)
-
-
-    def forward(self, e):
-        base_features = self.base(e)
-        
-        sh_sky = self.sh_sky_outlayer(base_features).view(-1, self.sh_dim_sky, 3)
-
-        sh_envl = self.sh_envl_layers(base_features)
-        sh_envl = self.sh_envl_outlayer(sh_envl).view(-1, self.sh_dim_envl, 3)
-
-        return sh_envl, sh_sky
-
-
-    def get_optimizer(self):
-        return self.optimizer(self.parameters(), lr=0.002)
-    
-
-    def save_weights(self, path: str, epoch: int):
-        torch.save(self.state_dict(), path + "/MLPNet_epoch_"+str(epoch)+".pth")
-
-
-    def initialize_sh_envl(self, dataloader, epochs, optim=None):
-        if optim is None:
-            optim = self.get_optimizer()
-        loss_ = torch.nn.MSELoss()
-        for _ in range(epochs):
-            self.train()
-            for batch in dataloader:
-                input = batch[0].squeeze().cuda()
-                sh_target = batch[1].cuda()
-                sh_out, _ = self(input)
-                mse = loss_(sh_target, sh_out)
-                mse.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), 1)
-                optim.step()
-                optim.zero_grad()
 
 
 
