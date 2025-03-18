@@ -7,7 +7,7 @@ from . import renderutils as ru
 from utils.general_utils import get_homogeneous
 from utils.sh_utils import  eval_sh
 from utils.sh_additional_utils import sh_render
-from utils.sh_utils import gauss_weierstrass_kernel
+from utils.sh_utils import gauss_kernel
 from typing import Dict, Tuple
 
 
@@ -15,20 +15,22 @@ class EnvironmentLight(torch.nn.Module):
 
     def __init__(self, base: torch.Tensor, sh_degree : int = 4):
         """
-        The class implements a shader based on IBL by following the implementation of NVDIFFREC, https://github.com/NVlabs/nvdiffrecmc.
+        The class implements a Cook-Torrance shader based on IBL by following the implementation of NVDIFFREC, https://github.com/NVlabs/nvdiffrecmc.
 
         Attributes:
             base (torch.tesnor): Spherical Harmonics (SH) coefficients
             sh_degree (int): SH degree,
-            sh_dim (int): number of SH coefficients
+            sh_dim (int): number of SH coefficients.
         Constants
             NUM_CHANNELS (int): number of channels of base, which is RGB,
             C1,C2,...,C5 (int): constants for computing diffuse irradiance
-            M_i,M_j (torch.tensor): indices of the upper triangular part of the matrix involved in diffuse irradiance computation.
         """
-        self.base = base.squeeze()
-        self.sh_degree = sh_degree
+        if sh_degree > 4:
+            raise NotImplementedError
+        else:
+            self.sh_degree = sh_degree
         self.sh_dim = (sh_degree +1)**2 
+        self.base = base.squeeze()
         # Define constant attributes for diffuse irradiance computation
         self.NUM_CHANNELS = 3
         self.C1 = 0.429043
@@ -36,7 +38,6 @@ class EnvironmentLight(torch.nn.Module):
         self.C3 = 0.743125
         self.C4 = 0.886227
         self.C5 = 0.247708
-        self.M_i, self.M_j = torch.triu_indices(4,4)
 
 
     def clone(self):
@@ -88,8 +89,6 @@ class EnvironmentLight(torch.nn.Module):
             2 * self.C2 * self.base[2,:] * z
         )
 
-        diff_outlier = torch.sum(diffuse_irradiance[diffuse_irradiance < 0])
-
         return diffuse_irradiance
 
 
@@ -101,13 +100,13 @@ class EnvironmentLight(torch.nn.Module):
         the Gauss-Weierstrass kernel, is used to derive the corresponding SH coefficients.
 
         Args: 
-            kr: tensor of shape N x 1 containing N kr values.
+            kr: roughness tensor of shape N x 1 containing.
         Returns:
             spec_light: tensor of shape N x self.sh_dim x 3 storing the SH coefficients
-                                       of specular light for each kr value and channel.
+                                       of specular light for each roughness value and channel.
         """
         # Build coefficients of blur kernel in frequency (SH) domain
-        gwk_sh = gauss_weierstrass_kernel(kr, self.sh_degree) # N x 25
+        gwk_sh = gauss_kernel(kr, self.sh_degree) # N x 25
         gwk_sh = gwk_sh.unsqueeze(-1) # N x 25 x 1
         # Adjust dimensions
         envlight_sh = self.base.unsqueeze(0)   # 1 x 25 x 3
@@ -127,42 +126,12 @@ class EnvironmentLight(torch.nn.Module):
         return util.gamma_correction(illu_hdr) # linear --> sRGB
 
 
-    def shade_specular_precomp(self, gb_normal:torch.tensor, albedo:torch.tensor,
-              specularity:torch.tensor=None, specular_intensity:torch.tensor=None)->Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        """
-       #TODO: add doc
-        """        
-
-        nrmvec = gb_normal
-
-        diffuse_irradiance_hdr = torch.nn.functional.relu(self.get_diffuse_irradiance(nrmvec.squeeze()))
-        # Compute diffuse color
-        diffuse_rgb_hdr = albedo * diffuse_irradiance_hdr
-        # Gamma correction: linear --> sRGB
-        diffuse_rgb_ldr = util.gamma_correction(diffuse_rgb_hdr)
-        extras = {"diffuse": diffuse_rgb_ldr}
-
-        if specular_intensity is None:
-            extras.update({"specular": torch.zeros_like(extras["diffuse"])})
-
-            return diffuse_rgb_ldr, extras
-        else:
-            specular_rgb_hdr = specularity*specular_intensity
-            shaded_rgb = (1-specularity) * diffuse_rgb_hdr + specular_rgb_hdr
-            # Gamma correction: linear --> sRGB
-            shaded_rgb_ldr = util.gamma_correction(shaded_rgb) 
-            specular_rgb_ldr = util.gamma_correction(specular_rgb_hdr)
-            extras.update({'specular': specular_rgb_ldr})
-
-            return shaded_rgb_ldr, extras
-
-
     def shade(self, gb_pos:torch.tensor, gb_normal:torch.tensor, albedo:torch.tensor, view_pos:torch.tensor,
               kr:torch.tensor=None, km:torch.tensor=None, specular:bool=True)->Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
        The function, based on NVDIFFREC implementation https://github.com/NVlabs/nvdiffrecmc,
         returns the emitted radiance in the input outgoing direction. 
-        If specular is True a Microfacets Cook-Torrane reflectance model is assumed, otherwise the model is assumed to be Lambertian. 
+        If specular is True a Microfacets Cook-Torrane reflectivity model is assumed, otherwise the model is assumed to be Lambertian. 
         In the specular case the final radiance is the sum of the diffuse and specular radiances.
         Args:
             gb_pos: world positions HxWxNx3
@@ -183,8 +152,8 @@ class EnvironmentLight(torch.nn.Module):
         # Compute diffuse color
         diffuse_rgb_hdr = albedo * diffuse_irradiance_hdr
         # Gamma correction: linear --> sRGB
-        diffuse_rgb_ldr = util.gamma_correction(diffuse_rgb_hdr)
-        extras = {"diffuse": diffuse_rgb_ldr}
+        diffuse_rgb_ldr = util.linear_to_srgb(diffuse_rgb_hdr)
+        extras = {"diffuse": torch.clamp(diffuse_rgb_ldr, 0.0, 1.0)}
 
         if not specular:
             extras.update({"specular": torch.zeros_like(extras["diffuse"])})
@@ -199,29 +168,30 @@ class EnvironmentLight(torch.nn.Module):
             if not hasattr(self, '_FG_LUT'):
                 self._FG_LUT = torch.as_tensor(np.fromfile('scene/NVDIFFREC/irrmaps/brdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2), dtype=torch.float32, device='cuda')
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
-            # Convovlve self.base with SH coeffs of Gaussian blur kernel of std kr 
+            # Convovlve base SH coeffs with SH coeffs of Gaussian blur kernel
             spec_light = self.get_specular_light_sh(kr.squeeze([0,1])) # (N, 25, 3)
             # Compute specular irradiance in reflection direction
             spec_irradiance_hdr = eval_sh(self.sh_degree, spec_light.transpose(1,2), reflvec.squeeze())
-            # adjust dimensions
+            # Adjust dimensions
             spec_irradiance_hdr = torch.clamp_min(spec_irradiance_hdr[None, None, ...], 1e-4) # (H, W, N, 3)
-            # Compute reflectance
+            # Compute Fresnel-Schlick reflectivity
             if km is None:
                 F0 = torch.ones_like(albedo) * 0.04  # [1, H, W, 3]
             else:
                 F0 = (1.0 - km) * 0.04 + albedo * km
-            reflectance = F0*fg_lookup[...,0:1] + fg_lookup[...,1:2]
+            reflectivity = F0 * fg_lookup[...,0:1] + fg_lookup[...,1:2]
             # Compute specular color
-            specular_rgb_hdr = spec_irradiance_hdr*reflectance
+            specular_rgb_hdr = spec_irradiance_hdr * reflectivity
             if km is None:
                 shaded_rgb = diffuse_rgb_hdr + specular_rgb_hdr
             else:
-                shaded_rgb = (1-km) * diffuse_rgb_hdr + specular_rgb_hdr
+                shaded_rgb = (1 - km) * diffuse_rgb_hdr + specular_rgb_hdr
             # Gamma correction: linear --> sRGB
-            shaded_rgb_ldr = util.gamma_correction(shaded_rgb)
-            extras.update({'specular': util.gamma_correction(specular_rgb_hdr)})
+            shaded_rgb = util.linear_to_srgb(shaded_rgb)
+            shaded_rgb = torch.clamp(shaded_rgb, 0.0, 1.0)
+            extras.update({'specular': torch.clamp(util.linear_to_srgb(specular_rgb_hdr), 0.0, 1.0)})
 
-            return shaded_rgb_ldr, extras
+            return shaded_rgb, extras
 
 
     def render_sh(self, width: int = 600)->torch.tensor:
