@@ -48,15 +48,6 @@ if not args.skip_rendering:
         # os.system("python render.py --iteration 30000 --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
         os.system("python render.py --iteration 40_000 --render_with_gt_envmaps --source_path " + source + " --model_path " + args.output_path + "/" + scene + common_args)
 
-# Reconstruction eval
-if not args.skip_metrics:
-    scenes_string = ""
-    for scene in nerfosr_scenes:
-        scene_path = args.output_path + "/" + scene
-        source = args.nerfosr + "/" + scene
-        masks_path = source + "/masks"
-        sky_masks_path = source + "/sky_masks" 
-        os.system("python metrics.py -m " + scene_path + " --masks_path " + masks_path + " --sky_masks_path " + sky_masks_path)
 
 # Eval with GT envmaps
 for scene in nerfosr_scenes:
