@@ -11,7 +11,7 @@
 
 import torch
 import numpy as np
-from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, get_const_lr_func, insert_zeros, cartesian_to_polar_coord
+from utils.general_utils import inverse_sigmoid, get_expon_lr_func, build_rotation, insert_zeros, cartesian_to_polar_coord
 from utils.camera_utils import get_scene_center
 from torch import nn
 import os
@@ -22,8 +22,6 @@ from simple_knn._C import distCUDA2
 from utils.graphics_utils import BasicPointCloud
 from utils.general_utils import strip_symmetric, build_scaling_rotation, get_minimum_axis, flip_align_view, sample_points_on_unit_hemisphere
 from utils.graphics_utils import getWorld2View2
-import open3d as o3d
-import math
 
 
 class GaussianModel:
@@ -96,7 +94,7 @@ class GaussianModel:
 
     @property
     def get_sky_xyz(self):
-        sky_angles = self.get_sky_angles_clamp
+        sky_angles = self.get_sky_angles
         # In COLMAP coordinate system
         x = torch.sin(sky_angles[...,0]) * torch.sin(sky_angles[...,1])
         y = -torch.cos(sky_angles[...,0])
@@ -158,7 +156,7 @@ class GaussianModel:
 
     
     @property
-    def get_sky_angles_clamp(self):
+    def get_sky_angles(self):
         # theta admitted range: [0, pi/2], phi admitted range: [-pi/2, pi/2]
         theta_mask = (self._sky_angles[...,0] < 0) | (self._sky_angles[...,0] > torch.pi/2)
         phi_mask = (self._sky_angles[...,1] < -torch.pi/2) | (self._sky_angles[...,1] > torch.pi/2)
@@ -239,19 +237,7 @@ class GaussianModel:
         # Initialize polar coordinates:
         self._sky_radius = nn.Parameter(torch.tensor(sky_distance, dtype=torch.float32, device="cuda", requires_grad=True))
         sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius)
-        #self._sky_angles = nn.Parameter(torch.cat((torch.full((self._xyz.shape[0], 2), torch.inf, device="cuda"), sky_angles), dim=0).requires_grad_(True))
         self._sky_angles = nn.Parameter(sky_angles).requires_grad_(True)
-
-        #sky_albedo = torch.ones((sky_xyz.shape[0], 3), device=self._albedo.device, requires_grad=True)
-        #self._albedo = nn.Parameter(torch.cat([self._albedo, sky_albedo], dim=0))
-
-
-        #sky_metalness = torch.zeros((sky_xyz.shape[0], 1), device=self._metalness.device, requires_grad=True)
-        #self._metalness = nn.Parameter(torch.cat([self._metalness, sky_metalness], dim=0))
-
-        #sky_roughness = torch.zeros((sky_xyz.shape[0], 1), device=self._roughness.device, requires_grad=True)
-        #self._roughness = nn.Parameter(torch.cat([self._roughness, sky_roughness], dim=0))
-
 
         sky_opacity =  inverse_sigmoid(0.1 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda")) # inverse_sigmoid(0.95 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda"))
         self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
@@ -451,7 +437,7 @@ class GaussianModel:
     def _prune_optimizer(self, mask, maskfg, mask_sky):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["sky_sh", "mlp", "embeddings", "sky_radius"]:
+            if group["name"] in ["mlp", "embeddings", "sky_radius"]:
                 continue
             if group["name"] in ["xyz", "albedo", "metalness", "roughness"]:
                 mask_prune = maskfg
@@ -501,7 +487,7 @@ class GaussianModel:
     def cat_tensors_to_optimizer(self, tensors_dict):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["sky_sh", "mlp", "embeddings", "sky_radius"]:
+            if group["name"] in ["mlp", "embeddings", "sky_radius"]:
                 continue
             assert len(group["params"]) == 1
             if group["name"] in tensors_dict.keys():
