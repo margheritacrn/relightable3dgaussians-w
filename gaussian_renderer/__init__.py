@@ -251,11 +251,11 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
 
 
     # Get surface normal from depth map.
-    # out_extras["normal_ref"] = render_surf_normal(viewpoint_cam=viewpoint_camera, depth=out_extras['depth'][0], bg_color= bg_color, alpha=out_extras['alpha'][0])
     out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, (out_extras['depth'][0] * (viewpoint_camera.sky_mask.cuda().squeeze())).unsqueeze(0))
+    #out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, (out_extras['depth'][0]).unsqueeze(0))
     out_extras["normal_ref"] = out_extras["normal_ref"].permute(2,0,1)
     out_extras["normal_ref"] = (out_extras["normal_ref"] * (out_extras["alpha"]).detach())
-    out_extras["normal_ref"] = out_extras["normal_ref"]  + torch.ones_like(out_extras["normal_ref"]) * (1-viewpoint_camera.sky_mask.cuda().squeeze())
+    out_extras["normal_ref"] = out_extras["normal_ref"] + torch.ones_like(out_extras["normal_ref"]) * (1-viewpoint_camera.sky_mask.cuda().squeeze())
     normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
     out.update(out_extras)
     return out
