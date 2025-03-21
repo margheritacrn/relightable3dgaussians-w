@@ -152,8 +152,8 @@ class EnvironmentLight(torch.nn.Module):
         # Compute diffuse color
         diffuse_rgb_hdr = albedo * diffuse_irradiance_hdr
         # Gamma correction: linear --> sRGB
-        diffuse_rgb_ldr = util.linear_to_srgb(diffuse_rgb_hdr)
-        extras = {"diffuse": torch.clamp(diffuse_rgb_ldr, 0.0, 1.0)}
+        diffuse_rgb_ldr = util.gamma_correction(diffuse_rgb_hdr)
+        extras = {"diffuse": diffuse_rgb_ldr}
 
         if not specular:
             extras.update({"specular": torch.zeros_like(extras["diffuse"])})
@@ -187,10 +187,9 @@ class EnvironmentLight(torch.nn.Module):
             else:
                 shaded_rgb = (1 - km) * diffuse_rgb_hdr + specular_rgb_hdr
             # Gamma correction: linear --> sRGB
-            shaded_rgb = util.linear_to_srgb(shaded_rgb)
-            shaded_rgb = torch.clamp(shaded_rgb, 0.0, 1.0)
-            extras.update({'specular': torch.clamp(util.linear_to_srgb(specular_rgb_hdr), 0.0, 1.0)})
-
+            shaded_rgb = util.gamma_correction(shaded_rgb)
+            extras.update({'specular': util.gamma_correction(specular_rgb_hdr)})
+            
             return shaded_rgb, extras
 
 
