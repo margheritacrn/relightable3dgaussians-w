@@ -71,7 +71,7 @@ def training(cfg, testing_iterations, saving_iterations):
         # Get environment lighting object for the current training image
         model.envlight.set_base(envlight_sh + envlight_sh_rand_noise)
 
-        render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False)
+        render_pkg = render(viewpoint_cam, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=cfg.fix_sky, specular=cfg.specular)
         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
         diff_col, spec_col = render_pkg["diffuse_color"], render_pkg["specular_color"]
 
@@ -139,7 +139,7 @@ def training(cfg, testing_iterations, saving_iterations):
             losses_extra['psnr'] = psnr(image*occluders_mask, gt_image*occluders_mask).mean()
             training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss,
                             iter_start.elapsed_time(iter_end), testing_iterations,
-                            model, eval, render, {"sky_sh_degree": cfg.sky_sh_degree, "pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky})
+                            model, eval, render, {"sky_sh_degree": cfg.sky_sh_degree, "pipe": cfg.pipe, "background": background, "debug": True, "fix_sky": cfg.fix_sky, "specular": cfg.specular})
             if iteration in saving_iterations or iteration == cfg.optimizer.iterations:
                 print(f" ITER: {iteration} saving model")
                 model.save(iteration)
@@ -217,17 +217,20 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         envlight_sh, sky_sh = model.mlp(embedding_gt_image)
                         model.envlight.set_base(envlight_sh)
                         render_pkg = renderFunc(viewpoint, model.gaussians, model.envlight, sky_sh, renderArgs["sky_sh_degree"], renderArgs["pipe"],
-                                                renderArgs["background"], debug=renderArgs["debug"], fix_sky=renderArgs["fix_sky"])
+                                                renderArgs["background"], debug=renderArgs["debug"], fix_sky=renderArgs["fix_sky"], specular=renderArgs["specular"])
                         image = torch.clamp(render_pkg["render"], 0.0, 1.0)
                         images.append(image)
                         gt_image = torch.clamp(gt_image, 0.0, 1.0)
                         gts.append(gt_image)
                         reconstructed_envlight = model.envlight.render_sh().cuda().permute(2,0,1)
                         reconstructed_sky_map = render_sh_map(sky_sh.squeeze()).cuda().permute(2,0,1)
+                        specular_light = model.envlight.get_specular_light_sh(torch.mean(model.gaussians.get_roughness).unsqueeze(0))
+                        reconstructed_spec_light = render_sh_map(specular_light.squeeze(), gamma_correct=True).cuda().permute(2,0,1)
                         if tb_writer and (idx < 10):
                             tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
                             tb_writer.add_images(config['name'] + "_view_{}/reconstructed_envlight".format(viewpoint.image_name), reconstructed_envlight[None], global_step=iteration)
                             tb_writer.add_images(config['name'] + "_view_{}/reconstructed_sky_map".format(viewpoint.image_name), reconstructed_sky_map[None], global_step=iteration)
+                            tb_writer.add_images(config['name'] + "_view_{}/reconstructed_spec_light".format(viewpoint.image_name), reconstructed_spec_light[None], global_step=iteration)
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                             for k in render_pkg.keys():
                                 if (render_pkg[k].dim()<3 or k=="render") and (k != "render_sun_dir"):
