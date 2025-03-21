@@ -24,31 +24,33 @@ class MLPNet(nn.Module):
 
 
         self.base = nn.Sequential(
-            nn.Linear(self.embedding_dim, self.dense_layer_size),
-            nn.Dropout(p=0.2),
-            nn.ReLU(), 
-            nn.Linear(self.dense_layer_size, self.dense_layer_size),
-            nn.ReLU(),
-            nn.Linear(self.dense_layer_size, self.dense_layer_size // 2),
-            nn.ReLU(),
-        )
+                nn.Linear(self.embedding_dim, self.dense_layer_size),
+                nn.Dropout(p=0.2),
+                nn.ReLU(), 
+                nn.Linear(self.dense_layer_size, self.dense_layer_size),
+                nn.ReLU(),
+                nn.Linear(self.dense_layer_size, self.dense_layer_size // 2),
+                nn.ReLU(),
+            )
 
-        
-        self.sh_sky_layers = nn.Linear(self.dense_layer_size // 2, self.sh_dim_sky*3)
+            
+        self.sh_sky_outlayer = nn.Linear(self.dense_layer_size // 2, self.sh_dim_sky*3)
 
         self.sh_envl_layers = nn.Sequential(nn.Linear(self.dense_layer_size // 2, self.dense_layer_size // 2),
-                                         nn.ReLU(),
-                                         nn.Linear(self.dense_layer_size // 2, self.sh_dim_envl*3))
+                                            nn.ReLU())
+        self.sh_envl_outlayer = nn.Linear(self.dense_layer_size // 2, self.sh_dim_envl*3)
 
 
     def forward(self, e):
         base_features = self.base(e)
         
-        sh_sky = self.sh_sky_layers(base_features).view(-1, self.sh_dim_sky, 3)
+        sh_sky = self.sh_sky_outlayer(base_features).view(-1, self.sh_dim_sky, 3)
 
-        sh_envl = self.sh_envl_layers(base_features).view(-1, self.sh_dim_envl, 3)
+        sh_envl = self.sh_envl_layers(base_features)
+        sh_envl = self.sh_envl_outlayer(sh_envl).view(-1, self.sh_dim_envl, 3)       
 
         return sh_envl, sh_sky
+
 
 
     def get_optimizer(self):
