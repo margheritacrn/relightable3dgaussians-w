@@ -29,6 +29,7 @@ import math
 from utils.sh_additional_utils import sh_render
 
 
+
 # Coefficients to evaluate Y_lm(phi,theta) using cartesian coordinates, with l>=0 and -l<=m<=l (l in N, m in Z)
 
 C0 = 0.28209479177387814   # Y_00
@@ -180,7 +181,13 @@ def gauss_kernel(roughness, sh_degree):
     return gw_kernel_sh
 
 
-def render_sh_map(sh, width: int = 600)->torch.tensor:
+def gamma_correction(rgb: torch.Tensor, gamma=2.2):
+    rgb = rgb.clamp(min=0.0, max=1.0) + 1e-4
+    rgb = rgb.pow(1. / gamma)
+    return rgb
+
+
+def render_sh_map(sh, width: int = 600, gamma_correct:bool=False)->torch.tensor:
     """Render sh map given sh coefficients
         Args:
         sh (torch.tensor, numpy.ndarray): sh coefficients of shape [..., (sh_deg + 1)**2, 3]
@@ -190,7 +197,10 @@ def render_sh_map(sh, width: int = 600)->torch.tensor:
         rendered_sh = torch.tensor(sh_render(sh.cpu().numpy(), width = width))
     else:
         rendered_sh = torch.tensor(sh_render(sh, width = width))
-    rendered_sh = torch.clamp(rendered_sh, 0, 1)
+    if gamma_correct:
+        rendered_sh = gamma_correction(rendered_sh)
+    else:
+        rendered_sh = torch.clamp(rendered_sh, 0, 1)
 
     return rendered_sh
 
