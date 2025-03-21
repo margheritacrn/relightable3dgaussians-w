@@ -102,7 +102,7 @@ def evaluate_test_report(model: Relightable3DGW, bg_color: torch.tensor, iterati
             gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
             model.envlight.set_base(gt_envmap_sh_rot)
             sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
-            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, model.config.sky_sh_degree, model.config.pipe, background, debug=False, fix_sky=True)
+            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, model.config.sky_sh_degree, model.config.pipe, background, debug=False, fix_sky=True, specular=model.config.specular)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
             # compute metrics
@@ -147,7 +147,7 @@ def render_and_evaluate_tuning_scenes(cfg, save_renders=False):
     # Environment maps processing
     scale = 10
     threshold = 0.999
-    sun_angle_range = [0, 2*np.pi]
+    sun_angle_range = [0, np.pi]
     init_rot_x = -np.pi/2
     init_rot_y = 0
     init_rot_z = 0
@@ -296,14 +296,14 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         mask = cv2.erode(mask, kernel, iterations=1)
         mask = torch.from_numpy(mask//255).cuda()
 
+        sky_mask = view.sky_mask.cuda()
+
         best_psnr = 0
         best_angle = None
         all_psnrs = []
 
         n = 51
         sun_angles_prepare_list = torch.linspace(sun_angle_range[0], sun_angle_range[1], n)
-        if eval_all:
-            sun_angles_prepare_list = torch.linspace(0, 2*np.pi, n)
         sun_angles = [torch.tensor([angle,0, 0]) for angle in sun_angles_prepare_list] #rotate only around y
 
         for angle in tqdm(sun_angles):
@@ -315,7 +315,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
             model.envlight.set_base(gt_envmap_sh_rot)
             sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
 
-            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
+            render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular)
             render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
             # compute metrics
@@ -354,6 +354,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         gt_image = gt_image[0:3, :, :]
         torchvision.utils.save_image(rendering_masked, os.path.join(renders_path, view.image_name + "_masked.png"))
         torchvision.utils.save_image(rendering, os.path.join(renders_unmasked_path, view.image_name + ".png"))
+        torchvision.utils.save_image(rendering*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
+                                     os.path.join(renders_unmasked_path, view.image_name + "_masked_sky.png"))
         torchvision.utils.save_image(gt_image*mask, os.path.join(gts_path, view.image_name + ".png"))
         
         used_angles.append(best_angle)
