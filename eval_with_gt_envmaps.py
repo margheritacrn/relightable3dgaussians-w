@@ -123,7 +123,7 @@ def evaluate_test_report(model: Relightable3DGW, bg_color: torch.tensor, iterati
         model.envlight.set_base(gt_envmap_sh_rot.T)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
 
-        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, model.config.sky_sh_degree, model.config.pipe, background, debug=False, fix_sky=True)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, model.config.sky_sh_degree, model.config.pipe, background, debug=False, fix_sky=True, specular=model.config.specular)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         torch.cuda.synchronize()
         gt_image = gt_image[0:3, :, :]
@@ -347,7 +347,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         model.envlight.set_base(gt_envmap_sh_rot.T)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
 
-        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular)
         rendering_masked = torch.clamp(render_pkg["render"]*mask, 0.0, 1.0)
         rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
         torch.cuda.synchronize()
