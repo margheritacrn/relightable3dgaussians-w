@@ -32,7 +32,7 @@ from eval_with_gt_envmaps import process_environment_map_image
 import glob
 
 
-def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model, pipeline, background, sky_sh_degree):
+def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model, pipeline, background, sky_sh_degree, specular):
     render_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "renders_with_gt_envmaps")
     gt_path = os.path.join(model_path, "test", "iteration_{}".format(iteration), "gt")
 
@@ -64,7 +64,7 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         model.envlight.set_base(envlight_sh)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")
 
-        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, pipeline, background, debug=True, fix_sky=True)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, pipeline, background, debug=True, fix_sky=True, specular=specular)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
 
@@ -92,7 +92,7 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         torchvision.utils.save_image(gt, os.path.join(gt_path, view.image_name + ".png"))
 
 
-def render_set(model_path, name, iteration, views, model, pipeline, background, sky_sh_degree, fix_sky):
+def render_set(model_path, name, iteration, views, model, pipeline, background, sky_sh_degree, fix_sky, specular):
     render_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "renders")
     gt_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "gts")
     lighting_path = os.path.join(model_path, name, "iteration_{}".format(iteration), "rendered_envlights")
@@ -116,7 +116,7 @@ def render_set(model_path, name, iteration, views, model, pipeline, background, 
         envlight_sh, sky_sh = model.mlp(embedding_gt)
         model.envlight.set_base(envlight_sh)
 
-        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, pipeline, background, debug=True, fix_sky=fix_sky)
+        render_pkg = render(view, model.gaussians, model.envlight, sky_sh, sky_sh_degree, pipeline, background, debug=True, fix_sky=fix_sky, specular=specular)
         render_pkg["render"] = torch.clamp(render_pkg["render"], 0.0, 1.0)
 
         torch.cuda.synchronize()
@@ -156,16 +156,18 @@ def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps
         bg_color = [1,1,1] if cfg.dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         fix_sky = cfg.fix_sky
+        specular = cfg.specular
 
         if not skip_train:
-             render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, fix_sky)
+             render_set(cfg.dataset.model_path, "train", model.load_iteration, model.scene.getTrainCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, fix_sky, specular)
 
         if not skip_test:
             if not render_with_gt_envmaps:
+                # NOTE: to be updated
                 model.optimize_embeddings_test()
-                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, fix_sky)
+                render_set(cfg.dataset.model_path, "test", model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, fix_sky, specular)
             else:
-                render_test_with_gt_envmaps(cfg.dataset.source_path,cfg.dataset.model_path,model.load_iteration,model.scene.getTestCameras(), model, cfg.pipe, background, cfg.sky_sh_degree)
+                render_test_with_gt_envmaps(cfg.dataset.source_path,cfg.dataset.model_path,model.load_iteration, model.scene.getTestCameras(), model, cfg.pipe, background, cfg.sky_sh_degree, specular)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
