@@ -28,6 +28,7 @@ smooth_depth_from_iter: 15_000
 lambda_depth_smooth: 0
 reg_sky_gauss_depth_from_iter: 0
 lambda_sky_gauss : 0.05
+lambda_sky_brdf: 0.5
 reg_sky_depth_from_iter: 0
 lambda_sky_depth: 0.05
 lambda_scale: 100.0
@@ -35,8 +36,6 @@ lambda_scale: 100.0
 envlight_sh_lr: 0.0002
 envlight_sh_wd: 0
 lambda_envlight: 100
-lambda_envlight_sh_prior: 0
-envlight_prior_until_iter: 0
 # per-image embeddings
 embeddings_lr: 0.0002
 embednet_pretrain_epochs: 100

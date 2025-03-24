@@ -84,7 +84,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Sky Gaussians regularization
         loss_sky_brdf = l1_loss(diff_col, torch.zeros_like(diff_col), mask=1-sky_mask) + l1_loss(spec_col, torch.zeros_like(spec_col), mask=1-sky_mask)
-        loss += 0.5 * loss_sky_brdf
+        loss += cfg.optimizer.lamba_sky_brdf * loss_sky_brdf
 
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
