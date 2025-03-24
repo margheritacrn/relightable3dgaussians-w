@@ -25,7 +25,7 @@ class EnvironmentLight(torch.nn.Module):
             NUM_CHANNELS (int): number of channels of base, which is RGB,
             C1,C2,...,C5 (int): constants for computing diffuse irradiance
         """
-        if sh_degree > 4:
+        if sh_degree > 5:
             raise NotImplementedError
         else:
             self.sh_degree = sh_degree
@@ -38,6 +38,7 @@ class EnvironmentLight(torch.nn.Module):
         self.C3 = 0.743125
         self.C4 = 0.886227
         self.C5 = 0.247708
+        self._FG_LUT = torch.as_tensor(np.fromfile('scene/NVDIFFREC/irrmaps/bsdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2), dtype=torch.float32, device='cuda')
 
 
     def clone(self):
@@ -59,6 +60,7 @@ class EnvironmentLight(torch.nn.Module):
     def set_base(self, base: torch.Tensor):
         assert base.squeeze().shape[0] == self.sh_dim, f"The number of SH coefficients must be {self.sh_dim}"
         self.base = base.squeeze()
+
 
     def get_diffuse_irradiance(self, normal: torch.tensor)-> torch.tensor:
         """
@@ -165,10 +167,9 @@ class EnvironmentLight(torch.nn.Module):
             # Lookup FG term from lookup texture
             NdotV = torch.clamp(util.dot(wo, nrmvec), min=1e-4)
             fg_uv = torch.cat((NdotV, kr), dim=-1)
-            if not hasattr(self, '_FG_LUT'):
-                self._FG_LUT = torch.as_tensor(np.fromfile('scene/NVDIFFREC/irrmaps/brdf_256_256.bin', dtype=np.float32).reshape(1, 256, 256, 2), dtype=torch.float32, device='cuda')
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
-            # Convovlve base SH coeffs with SH coeffs of Gaussian blur kernel
+            # Convovlve base SH coeffs with SH coeffs of Gaussian kernel
+            kr = self.clamp_roughness(kr)
             spec_light = self.get_specular_light_sh(kr.squeeze([0,1])) # (N, 25, 3)
             # Compute specular irradiance in reflection direction
             spec_irradiance_hdr = eval_sh(self.sh_degree, spec_light.transpose(1,2), reflvec.squeeze())
