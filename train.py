@@ -84,13 +84,13 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Sky Gaussians regularization
         loss_sky_brdf = l1_loss(diff_col, torch.zeros_like(diff_col), mask=1-sky_mask) + l1_loss(spec_col, torch.zeros_like(spec_col), mask=1-sky_mask)
-        loss += cfg.optimizer.lamba_sky_brdf * loss_sky_brdf
+        loss += cfg.optimizer.lambda_sky_brdf * loss_sky_brdf
 
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
-            rendered_normal = render_pkg["normal"]*occluders_mask*sky_mask
-            rendered_surf_normal = render_pkg["normal_ref"]*occluders_mask*sky_mask
-            normal_consistency_loss =  (1 - (rendered_normal*rendered_surf_normal).sum(dim=0))[None]
+            rendered_normal = render_pkg["normal"]*occluders_mask * sky_mask
+            rendered_surf_normal = render_pkg["normal_ref"] * occluders_mask * sky_mask
+            normal_consistency_loss =  (1 - (rendered_normal * rendered_surf_normal).sum(dim=0))[None]
             normal_consistency_loss = cfg.optimizer.lambda_normal * (normal_consistency_loss).mean()
             loss += normal_consistency_loss
             logs.update({"Normal loss": f"{normal_consistency_loss:.{5}f}"})
