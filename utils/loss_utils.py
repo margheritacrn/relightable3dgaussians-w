@@ -30,7 +30,7 @@ def l1_loss(network_output, gt, mask=None):
             return 0
         assert mask.shape[0] == network_output.shape[0], "the mask must be expanded as the input images"
         num_pixels = torch.sum(mask == 1)
-        return (torch.abs((network_output*mask - gt*mask)).sum())/num_pixels
+        return (torch.abs((network_output * mask - gt * mask)).sum())/num_pixels
     else:
         return torch.abs((network_output - gt)).mean()
 
@@ -93,11 +93,13 @@ def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None
             raise NotImplementedError
         return ssim_map.mean(1).mean(1).mean(1)
 
+
 def zero_one_loss(img):
     zero_epsilon = 1e-3
     val = torch.clamp(img, zero_epsilon, 1 - zero_epsilon)
     loss = torch.mean(torch.log(val) + torch.log(1 - val))
     return loss
+
 
 def predicted_depth_loss(depth_map, mask=None):
     with torch.no_grad():
@@ -161,6 +163,7 @@ def predicted_normal_loss(normal, normal_ref, alpha=None):
 
     return loss
 
+
 def delta_normal_loss(delta_normal_norm, alpha=None):
     # delta_normal_norm: (3, H, W), alpha: (3, H, W)
     if alpha is not None:
@@ -213,15 +216,7 @@ def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tens
     avg_light = torch.mean(avg_light_per_normal, dim = 0)
     # take squared 2 norm
     envlight_loss = torch.mean((avg_light)**2)
-    """
-    if sh_degree > 2:
-        diffuse_light = eval_sh(2, envlight_sh[:9, :].transpose(0,1), rand_hemisphere_dirs)
-        avg_diff_light_per_normal = torch.mean(diffuse_light, dim = 1)
-        avg_diff_light = torch.mean(avg_diff_light_per_normal, dim = 0)
-        envlight_diffuse_loss = torch.mean((avg_diff_light)**2)
-        return envlight_loss + envlight_diffuse_loss
-    else:
-    """
+
     return envlight_loss
 
 
@@ -248,10 +243,6 @@ def penalize_outside_range(tensor, lower_bound=0.0, upper_bound=1.0):
     if above_upper_bound.numel():
         error += torch.mean((above_upper_bound - upper_bound) ** 2)
     return error
-
-
-def envlight_prior_loss(sh_output: torch.Tensor, sh_envmap_init: torch.Tensor):
-    return l2_loss(sh_output, sh_envmap_init)
 
 
 def min_scale_loss(radii, gaussians):
