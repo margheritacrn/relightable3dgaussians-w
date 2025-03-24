@@ -11,7 +11,7 @@ import numpy as np
 import sys
 import importlib
 from skimage.metrics import structural_similarity as ssim_skimage
-from utils.loss_utils import mse2psnr, img2mae, img2mse, img2mse_image
+from utils.loss_utils import mse2psnr, img2mae, img2mse, img2mse_image, l1_loss
 from utils.sh_additional_utils import get_coefficients_from_image
 import cv2
 import numpy as np
@@ -258,7 +258,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
     makedirs(renders_unmasked_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
 
-    ssims, psnrs, mses, maes = [], [], [], []
+    ssims, psnrs, mses, maes, rec_losses = [], [], [], [], []
     img_names, used_angles =[], []
 
     for view in tqdm(test_cameras):
@@ -372,6 +372,10 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         _, full = ssim_skimage(rendered_np, gt_image_np, win_size=5, channel_axis=2, full=True, data_range=1.0)
         mssim_over_mask = (torch.tensor(full).cuda()*mask.unsqueeze(-1)).sum() / (3*mask.sum())
         ssims.append(mssim_over_mask)
+        Ll1 = l1_loss(rendering, gt_image, mask=mask.expand_as(gt_image))
+        Ssim = (1.0 - mssim_over_mask)
+        rec_loss = Ll1 * (1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim * Ssim
+        rec_losses.append(rec_loss)
 
     psnrs_dict = {img_name: psnr.item() for img_name, psnr in zip(img_names, psnrs)}
     mses_dict = {img_name: mse.item() for img_name, mse in zip(img_names, mses)}
@@ -388,6 +392,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
         print("  MSE: {:>12.7f}".format(torch.tensor(mses).mean(), ".5"), file=f)
         print("  MAE: {:>12.7f}".format(torch.tensor(maes).mean(), ".5"), file=f)
         print("  SSIM: {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"), file=f)
+        print("  REC LOSS: {:>12.7f}".format(torch.tensor(rec_losses).mean(), ".5"), file=f)
         print(f"  best PSNRs: {psnrs_dict}", file=f)
         print(f"  best MSEs: {mses_dict}", file=f)
         print(f"  best MAEs: {maes_dict}", file=f)
