@@ -401,7 +401,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
-    print("Rendering with GT illumination" + cfg.dataset.model_path)
+    print("Rendering and evaluating with GT illumination" + cfg.dataset.model_path)
     cfg.dataset.eval = True
     render_and_evaluate_test_scenes(cfg,  cfg.eval_all)
 
