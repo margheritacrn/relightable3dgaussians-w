@@ -248,8 +248,9 @@ def penalize_outside_range(tensor, lower_bound=0.0, upper_bound=1.0):
 def min_scale_loss(radii, gaussians):
     visibility_filter = radii > 0
     try:
-        if visibility_filter.sum() > 0: # consider just visible gaussians
-            scale = gaussians.get_scaling[visibility_filter]
+        if visibility_filter.sum() > 0: # consider just visible fg gaussians
+            scale = gaussians.get_scaling[visibility_filter & ~gaussians.get_is_sky.squeeze()]
+            scale = scale
             sorted_scale, _ = torch.sort(scale, dim=-1)
             min_scale_loss = sorted_scale[...,0] # take minimum scales
             return min_scale_loss.mean()
