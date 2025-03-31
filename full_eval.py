@@ -53,7 +53,7 @@ if not args.skip_rendering:
 for scene in nerfosr_scenes:
     scene_path = args.output_path + "/" + scene
     source = args.nerfosr + "/" + scene
-    test_config_path = "./example_test_configs/" + scene
+    test_config_path = "./test_configs/" + scene
     iterations = ["40_000"]
     for iter in iterations:
         os.system("python eval_with_gt_envmaps.py" + " --model_path " + scene_path + " --source_path " + source + " --test_config " + test_config_path + " --iteration " + iter)
