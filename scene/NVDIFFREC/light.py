@@ -169,7 +169,6 @@ class EnvironmentLight(torch.nn.Module):
             fg_uv = torch.cat((NdotV, kr), dim=-1)
             fg_lookup = dr.texture(self._FG_LUT, fg_uv, filter_mode='linear', boundary_mode='clamp')
             # Convovlve base SH coeffs with SH coeffs of Gaussian kernel
-            kr = self.clamp_roughness(kr)
             spec_light = self.get_specular_light_sh(kr.squeeze([0,1])) # (N, 25, 3)
             # Compute specular irradiance in reflection direction
             spec_irradiance_hdr = eval_sh(self.sh_degree, spec_light.transpose(1,2), reflvec.squeeze())
