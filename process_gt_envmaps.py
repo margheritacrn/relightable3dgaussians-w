@@ -8,10 +8,13 @@ import utils.sh_additional_utils as sh_utility
 from argparse import ArgumentParser
 import numpy as np
 import imageio.v3 as im
+import matplotlib.pyplot as plt
+import torch
+import spaudiopy
+from utils.sh_additional_utils import get_coefficients_from_image
 
 
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1" 
-
 
 
 def find_folder(base_path, folder_name):
@@ -19,6 +22,16 @@ def find_folder(base_path, folder_name):
         if folder_name in dirs:
             return os.path.join(root, folder_name)
     return None
+
+
+
+def scale_saturated_pixels_and_extract_sh(img_path, scale_high, lmax=4, threshold=0.999):
+    
+    img = plt.imread(img_path)
+    img = torch.from_numpy(img).float() / 255
+    img[img > threshold] *= scale_high
+    coeffs = get_coefficients_from_image(img.numpy(), lmax)
+    return coeffs
 
 
 def rotate_envmap(envmap: EnvironmentMap, angles:list, return_sh: bool = False, lmax: int = 2, resize_height: int = None, save_jpg_path: str = None):
@@ -55,42 +68,54 @@ def rotate_envmap(envmap: EnvironmentMap, angles:list, return_sh: bool = False, 
         return envmap_rot
 
 
-def get_sh_coeffs_gt_envmaps(nerfosr_path: str, lmax: int=4, rotate=False):
+def process_gt_envmaps(nerfosr_path: str, lmax: int=4, rotate=False):
     for scene in os.listdir(nerfosr_path):
         print(f"Scene: {scene}")
         gtenvmapsdir_path = find_folder(os.path.join(nerfosr_path, scene), "ENV_MAP_CC")
+        scale_high = 10
+        if scene == "st":
+            scale_high = 30
         if gtenvmapsdir_path is None:
             gtenvmapsdir_path = os.path.join(nerfosr_path, scene + "/test/ENV_MAP_CC")
         for lighting_cond in os.listdir(gtenvmapsdir_path):
             lighting_cond_path = os.path.join(gtenvmapsdir_path, lighting_cond)
             for gtenvmap_filename in os.listdir(lighting_cond_path):
-                if "rotated" not in gtenvmap_filename and gtenvmap_filename[-4:] == ".jpg": 
-                    print(f"Processing {gtenvmap_filename}")
-                    # Rotate
-                    gtenvmap_jpg_path = os.path.join(lighting_cond_path, gtenvmap_filename)
-                    gt_envmap = EnvironmentMap(gtenvmap_jpg_path, 'latlong')
-                    if rotate:
-                        # Rotate envmap
-                        _, gtenvmap_sh_coeffs = rotate_envmap(gt_envmap, angles=[0,0,-np.pi/2], return_sh=True, lmax=lmax, resize_height=180,
-                                                            save_jpg_path=gtenvmap_jpg_path[:-4]+"_rotated.jpg") # angles z,y,x
-                        np.save(gtenvmap_jpg_path[:-4]+f'rotatedSH{lmax}.npy', gtenvmap_sh_coeffs)
-                    else:
-                        gtenvmap_sh_coeffs = sh_utility.get_coefficients_from_image(gt_envmap.data, lmax)
-                        np.savetxt(gtenvmap_jpg_path[:-4]+f'SH{lmax}.txt', gtenvmap_sh_coeffs)
-                    # SH reconstruction 
-                    rendered_sh = sh_utility.sh_render(gtenvmap_sh_coeffs, width = 360)
-                    rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
-                    rendered_sh = rendered_sh.astype(np.uint8)
-                    reconstructed_envmap = Image.fromarray(rendered_sh)
-                    if rotate:
-                        reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"rotatedSH{lmax}rec.jpg")
-                    else:
-                        reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"SH{lmax}rec.jpg")
+                # if "rotated" not in gtenvmap_filename and gtenvmap_filename[-4:] == ".jpg": 
+                print(f"Processing {gtenvmap_filename}")
+                # Rotate
+                gtenvmap_jpg_path = os.path.join(lighting_cond_path, gtenvmap_filename)
+                gt_envmap_sh = scale_saturated_pixels_and_extract_sh(gtenvmap_jpg_path, scale_high=scale_high, lmax=lmax)
+                if rotate: #rotate around x axis
+                    gt_envmap_sh = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, 0, 0, -np.pi/2, 'real')
+                    np.savetxt(gtenvmap_jpg_path[:-4]+f'rotated_SH{lmax}.txt', gt_envmap_sh.T)
+                else:
+                    np.savetxt(gtenvmap_jpg_path[:-4]+f'SH{lmax}.txt', gt_envmap_sh.T)
+                """"
+                if rotate:
+                    # Rotate envmap around x axis
+                    _, gtenvmap_sh_coeffs = rotate_envmap(gt_envmap, angles=[0,0,-np.pi/2], return_sh=True, lmax=lmax, resize_height=180,
+                                                        save_jpg_path=gtenvmap_jpg_path[:-4]+"_rotated.jpg") # angles z,y,x
+                    np.save(gtenvmap_jpg_path[:-4]+f'rotatedSH{lmax}.npy', gtenvmap_sh_coeffs)
+                    np.savetxt(gtenvmap_jpg_path[:-4]+f'rotatedSH{lmax}.txt', gtenvmap_sh_coeffs)
+                else:
+                    gtenvmap_sh_coeffs = sh_utility.get_coefficients_from_image(gt_envmap.data, lmax)
+                    np.savetxt(gtenvmap_jpg_path[:-4]+f'SH{lmax}.txt', gtenvmap_sh_coeffs)"
+                """
+                
+                # SH reconstruction 
+                rendered_sh = sh_utility.sh_render(gt_envmap_sh.T, width = 360)
+                rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
+                rendered_sh = rendered_sh.astype(np.uint8)
+                reconstructed_envmap = Image.fromarray(rendered_sh)
+                if rotate:
+                    reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"rotatedSH{lmax}rec.jpg")
+                else:
+                    reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"SH{lmax}rec.jpg")
 
 
 def main(nerfosr_path: str, lmax: int, rotate: bool):
     print("Processing NeRF-OSR GT envmaps")
-    get_sh_coeffs_gt_envmaps(nerfosr_path, lmax, rotate)
+    process_gt_envmaps(nerfosr_path, lmax, rotate)
     print("\nEnd")
 
 
@@ -100,4 +125,5 @@ if __name__ == "__main__":
     parser.add_argument("--lmax", type=int, default=4)
     parser.add_argument("--rotate", action="store_true")
     args, _ = parser.parse_known_args()
+    print(args)
     main(args.nerfosr, args.lmax, args.rotate)
