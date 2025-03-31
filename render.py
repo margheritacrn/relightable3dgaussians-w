@@ -172,7 +172,6 @@ def render_sets(cfg, skip_train : bool, skip_test : bool, render_with_gt_envmaps
 
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
-    print("Rendering " + cfg.dataset.model_path)
     cfg.dataset.eval = True
     render_sets(cfg, cfg.skip_train, cfg.skip_test, cfg.render_with_gt_envmaps)
     # All done
@@ -199,6 +198,8 @@ if __name__ == "__main__":
         f"+skip_test={args.skip_test}",
         f"+render_with_gt_envmaps={args.render_with_gt_envmaps}"
     ]
+
+    print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
