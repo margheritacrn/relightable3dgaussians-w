@@ -155,8 +155,8 @@ class Relightable3DGW:
         ''' Learning rate scheduling per step '''
         self.gaussians.update_learning_rate(iteration)
         for param_group in self.optimizer.param_groups:
-            if iteration == 30000 and (param_group["name"] in ["envlight_sh", "embeddings", "sky_sh", "shadow_mlp"]):
-                param_group['lr'] = 0.0001
+            if iteration == 20000 and (param_group["name"] in ["embeddings", "mlp"]):
+                param_group['lr'] = 0.0002
 
 
     def get_envlights_sh_all(self, eval=False):
