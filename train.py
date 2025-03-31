@@ -273,7 +273,6 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
 @hydra.main(version_base=None, config_path="configs", config_name="relightable3DG-W")
 def main(cfg: DictConfig):
     print(cfg)
-    print("Optimizing " + cfg.dataset.model_path)
     training(cfg, cfg.test_iterations, cfg.save_iterations)
     # All done
     print("\nTraining complete.")
@@ -314,6 +313,8 @@ if __name__ == "__main__":
         f"+test_iterations={args.test_iterations}",
         f"+save_iterations={args.save_iterations}",
     ]
+
+    print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
