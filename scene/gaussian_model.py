@@ -239,7 +239,7 @@ class GaussianModel:
         sky_angles = cartesian_to_polar_coord(sky_xyz, self._sky_gauss_center.squeeze(), self._sky_radius)
         self._sky_angles = nn.Parameter(sky_angles).requires_grad_(True)
 
-        sky_opacity =  inverse_sigmoid(0.1 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda")) # inverse_sigmoid(0.95 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda"))
+        sky_opacity =  inverse_sigmoid(0.1 * torch.ones((sky_xyz.shape[0], 1), dtype=torch.float, device="cuda"))
         self._opacity = nn.Parameter(torch.cat([self._opacity, sky_opacity]))
 
         self._is_sky = torch.cat((self._is_sky, torch.ones((sky_xyz.shape[0], 1), dtype=torch.bool, device=self._is_sky.device)), dim=0)
@@ -262,7 +262,7 @@ class GaussianModel:
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init*self.spatial_lr_scale, "name": "xyz"},
-            {'params': [self._albedo], 'lr': training_args.feature_lr, "name": "albedo"},
+            {'params': [self._albedo], 'lr': training_args.albedo_lr, "name": "albedo"},
             {'params': [self._opacity], 'lr': training_args.opacity_lr, "name": "opacity"},
             {'params': [self._scaling], 'lr': training_args.scaling_lr*self.spatial_lr_scale, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"},
@@ -553,25 +553,12 @@ class GaussianModel:
         selected_sky_pts_mask = selected_pts_mask[self.get_is_sky.squeeze()]
         if torch.sum(selected_pts_mask) == 0:
             return
-        """
+
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         means =torch.zeros((stds.size(0), 3),device="cuda")
         samples = torch.normal(mean=means, std=stds)
         rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1)
         new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) + self.get_xyz[selected_pts_mask].repeat(N, 1)
-        """
-        
-        stds = self.get_scaling[selected_pts_mask].repeat(N,1) # (n,3)
-        stds, sorted_idx = torch.sort(stds, dim=1, descending=True)
-        stds = stds[:,:2]
-        means = torch.zeros((stds.size(0), 2),device="cuda")
-        # Get 2D samples from standard Gaussian
-        samples = torch.normal(mean=means, std=stds)
-        # Project samples in 3D such that the centers lie in the ellipse defined by the two greatest axis
-        samples = insert_zeros(samples, sorted_idx[..., -1])
-        rots = build_rotation(self._rotation[selected_pts_mask]).repeat(N,1,1) # (n*N, 3, 3)
-        rots = torch.gather(rots, dim=2, index=sorted_idx[:,None,:].repeat(1, 3, 1)).squeeze()
-        new_xyz = torch.bmm(rots, samples.unsqueeze(-1)).squeeze(-1) +  self.get_xyz[selected_pts_mask].repeat(N, 1)
         new_scaling = self.scaling_inverse_activation(self.get_scaling[selected_pts_mask].repeat(N,1) / (0.8*N))
         new_rotation = self._rotation[selected_pts_mask].repeat(N,1)
         new_albedo = self._albedo[selected_fg_pts_mask].repeat(N,1)
@@ -614,14 +601,6 @@ class GaussianModel:
         new_metalness = self._metalness[selected_fg_pts_mask]
         new_sky_angles = self._sky_angles[selected_sky_pts_mask]
         new_is_sky = self._is_sky[selected_pts_mask]
-
-
-
-        if new_xyz is not None:
-            with torch.no_grad():
-                normals = self.get_normal(dir_pp_normalized=viewing_dir, normalize=True)
-            new_xyz = new_xyz + grads[selected_pts_mask & ~self.get_is_sky.squeeze()] * normals[selected_pts_mask & ~self.get_is_sky.squeeze()]
-
 
         self.densification_postfix(new_xyz, new_albedo, new_opacities, new_scaling, new_rotation, 
                                    new_roughness, new_metalness, new_is_sky, new_sky_angles)
