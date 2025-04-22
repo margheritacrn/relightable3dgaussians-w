@@ -15,6 +15,7 @@ import os
 import sys
 from tqdm import tqdm
 from os import makedirs
+import torch.nn.functional as F
 from gaussian_renderer import render
 import torchvision
 from utils.general_utils import safe_state
@@ -30,6 +31,7 @@ from scene.relit3DGW_model import Relightable3DGW
 import hydra
 from eval_with_gt_envmaps import process_environment_map_image
 import glob
+import spaudiopy
 
 
 def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model, pipeline, background, sky_sh_degree, specular):
@@ -55,11 +57,14 @@ def render_test_with_gt_envmaps(source_path,model_path, iteration, views, model,
         else:
                 lighting_condition = view.image_name.split("_IMG")[0]
         envmap_folder_path = os.path.join(source_path, "test", "ENV_MAP_CC", lighting_condition)
-        envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*_rotated.jpg'))[0]
-        # envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*.jpg'))
-        # envmap_img_path = [fname for fname in envmap_img_path if "SH" not in fname and "rotated" not in fname][0]
+        envmap_img_path =  glob.glob(os.path.join(envmap_folder_path, '*.jpg'))
+        if len(envmap_img_path) == 0:
+            continue
+        envmap_img_path = [fname for fname in envmap_img_path if "SH" not in fname and "rotated" not in fname][0]
         envlight_sh = process_environment_map_image(envmap_img_path, scale, threshold)
-        envlight_sh = torch.tensor(envlight_sh, dtype=torch.float32, device="cuda")
+        # rotate around x axis
+        envlight_sh = spaudiopy.sph.rotate_sh(envlight_sh.T, 0, -np.pi/2, 0, 'real')
+        envlight_sh = torch.tensor(envlight_sh.T, dtype=torch.float32, device="cuda")
         gt = view.original_image.cuda()
         model.envlight.set_base(envlight_sh)
         sky_sh = torch.zeros((9,3), dtype=torch.float32, device="cuda")

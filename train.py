@@ -258,7 +258,7 @@ def training_report(tb_writer, iteration, Ll1, loss, losses_extra, l1_loss, elap
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_train, iteration)
                         tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_train, iteration)
 
-                    if eval:
+                    if eval and model.config.test_config_path != "":
                         psnr_test =  evaluate_test_report(model, renderArgs["background"], iteration, tb_writer)
                         print("\n[ITER {}] Evaluating test : PSNR {}".format(iteration, psnr_test))
 
