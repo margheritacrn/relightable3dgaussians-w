@@ -15,7 +15,7 @@ from optuna.visualization import plot_optimization_history, plot_param_importanc
 from numba import cuda
 
 
-scenes = ["schloss"]
+scenes = ["schloss", "europa", "stjacob", "stjohann", "rathaus"]
 
 
 def objective(trial: optuna.trial.Trial, output_path: str, nerfosr_path: str):
