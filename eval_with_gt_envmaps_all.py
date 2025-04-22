@@ -9,13 +9,14 @@ from utils.general_utils import safe_state
 from argparse import ArgumentParser
 import numpy as np
 import sys
+import random
 import importlib
 from skimage.metrics import structural_similarity as ssim_skimage
 from utils.loss_utils import mse2psnr, img2mae, img2mse, img2mse_image, l1_loss
 from utils.sh_additional_utils import get_coefficients_from_image
 import cv2
 import numpy as np
-import glob
+import math
 import torch
 import torchvision.transforms.functional as tf
 import os
@@ -49,7 +50,7 @@ def process_environment_map_image(img_path, scale_high, threshold):
 
 
 @torch.no_grad()
-def render_and_evaluate_test_scenes(cfg, eval_all=False):
+def render_and_evaluate_test_scenes(cfg, random_sun_angle=False):
     model = Relightable3DGW(cfg)
 
     bg_color = [1,1,1] if cfg.dataset.white_background else [0, 0, 0]
@@ -63,14 +64,24 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
     lighting_conditions = [config_test_name.split("_IMG")[0] if "IMG" in config_test_name else config_test_name.split("_DSC")[0] for config_test_name in config_test_names]
     test_views = [view for view in model.scene.getTestCameras()]
     lights_to_test_views = {lighting: [test_view for test_view in test_views if lighting in test_view.image_name] for lighting in lighting_conditions}
-
+    
     out_dir_name = "eval_gt_envmap_all"
+    if random_sun_angle:
+        out_dir_name = "eval_gt_envmap_all_random_sun_angle"
+
     renders_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders")
     renders_unmasked_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_unmasked")
     gts_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "gt")
+    renders_diffuse_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_diffuse")
+    renders_specular_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_specular")
+    renders_normals_view_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_normals_view")
     makedirs(renders_path, exist_ok=True)
     makedirs(renders_unmasked_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
+    makedirs(renders_diffuse_path, exist_ok=True)
+    makedirs(renders_specular_path, exist_ok=True)
+    makedirs(renders_normals_view_path, exist_ok=True)
+
 
     ssims, psnrs, mses, maes, rec_losses = [], [], [], [], []
     img_names = []
@@ -92,50 +103,53 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
 
         n = 51
         sun_angles_prepare_list = torch.linspace(sun_angle_range[0], sun_angle_range[1], n)
+
         sun_angles = [torch.tensor([angle,0, 0]) for angle in sun_angles_prepare_list] #rotate only around y
+        if random_sun_angle:
+            best_angle = random.choice(sun_angles)
+        else:
+            best_psnr = 0
+            best_angle = None
 
-        best_psnr = 0
-        best_angle = None
+            for angle in tqdm(sun_angles):
+                views_psnrs = []
+                all_psnrs = []
+                for view in test_views:
 
-        for angle in tqdm(sun_angles):
-            views_psnrs = []
-            all_psnrs = []
-            for view in test_views:
+                    gt_image = view.original_image.cuda()
 
-                gt_image = view.original_image.cuda()
+                    eval_mask_path = os.path.join(cfg.dataset.source_path, "test", "cityscapes_mask", "binary_masks", view.image_name + ".png")
+                    eval_mask = cv2.imread(eval_mask_path, cv2.IMREAD_GRAYSCALE)
+                    eval_mask = cv2.resize(eval_mask, (gt_image.shape[2], gt_image.shape[1]))
+                    kernel = np.ones((5, 5), np.uint8)
+                    eval_mask = cv2.erode(eval_mask, kernel, iterations=1)
+                    eval_mask = torch.from_numpy(eval_mask//255).cuda()
 
-                eval_mask_path = os.path.join(cfg.dataset.source_path, "test", "cityscapes_mask", "binary_masks", view.image_name + ".png")
-                eval_mask = cv2.imread(eval_mask_path, cv2.IMREAD_GRAYSCALE)
-                eval_mask = cv2.resize(eval_mask, (gt_image.shape[2], gt_image.shape[1]))
-                kernel = np.ones((5, 5), np.uint8)
-                eval_mask = cv2.erode(eval_mask, kernel, iterations=1)
-                eval_mask = torch.from_numpy(eval_mask//255).cuda()
+                    # Rotate envmap and render
+                    gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, init_rot_z, init_rot_y, init_rot_x, 'real')
+                    gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, angle[2], angle[0], angle[1], 'real')
+                    gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
+                    model.envlight.set_base(gt_envmap_sh_rot)
+                    render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular)
+                    rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
+                    # Compute PSNR
+                    view_psnr = mse2psnr(img2mse(rendering, gt_image, mask=eval_mask))
+                    views_psnrs.append(view_psnr.cpu())
+        
+                current_psnr = torch.tensor(views_psnrs).mean()
+                all_psnrs.append(current_psnr.cpu())
 
-                # Rotate envmap and render
-                gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, init_rot_z, init_rot_y, init_rot_x, 'real')
-                gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, angle[2], angle[0], angle[1], 'real')
-                gt_envmap_sh_rot = torch.tensor(gt_envmap_sh_rot.T, dtype=torch.float32, device="cuda")
-                model.envlight.set_base(gt_envmap_sh_rot)
-                render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular)
-                rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                # Compute PSNR
-                view_psnr = mse2psnr(img2mse(rendering, gt_image, mask=eval_mask))
-                views_psnrs.append(view_psnr.cpu())
-    
-            current_psnr = torch.tensor(views_psnrs).mean()
-            all_psnrs.append(current_psnr.cpu())
+                if current_psnr > best_psnr:
+                    best_angle = angle
+                    best_psnr = current_psnr
 
-            if current_psnr > best_psnr:
-                best_angle = angle
-                best_psnr = current_psnr
-
-        print(f"{lighting_cond}- Lowest avg PSNR: {np.array(all_psnrs).min()}\n")
-        print(f"{lighting_cond}- Best angle {best_angle}")
-        print(f"{lighting_cond}- Best avg PSNR: {best_psnr}\n")
+            print(f"{lighting_cond}- Lowest avg PSNR: {np.array(all_psnrs).min()}\n")
+            print(f"{lighting_cond}- Best angle {best_angle}")
+            print(f"{lighting_cond}- Best avg PSNR: {best_psnr}\n")
 
         # Get best orientation of the gt envmap
         gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh.T, init_rot_z, init_rot_y, init_rot_x, 'real')
-        gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, angle[2], angle[0], angle[1], 'real')
+        gt_envmap_sh_rot = spaudiopy.sph.rotate_sh(gt_envmap_sh_rot, best_angle[2], best_angle[0], best_angle[1], 'real')
 
         # Save best orientation of the gt envmap:
         np.save(os.path.join(renders_path, "best_envmap" + lighting_cond+".npy"), gt_envmap_sh_rot)
@@ -163,16 +177,25 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
 
                 # Render
                 model.envlight.set_base(gt_envmap_sh_rot)
-                render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular)
+                render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular, normal_view=True)
                 rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
                 rendering_masked = torch.clamp(render_pkg["render"]*eval_mask, 0.0, 1.0)
+                rendering_diffuse = torch.clamp(render_pkg["diffuse_color"], 0.0, 1.0)
+                rendering_specular = torch.clamp(render_pkg["specular_color"], 0.0, 1.0)
+                rendering_normal_view = 0.5 + (0.5*render_pkg["normal"])
                 torch.cuda.synchronize()
                 gt_image = gt_image[0:3, :, :]
                 torchvision.utils.save_image(rendering_masked, os.path.join(renders_path, view.image_name + "_masked.png"))
                 torchvision.utils.save_image(rendering, os.path.join(renders_unmasked_path, view.image_name + ".png"))
                 torchvision.utils.save_image(rendering*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
                                                 os.path.join(renders_unmasked_path, view.image_name + "_masked_sky.png"))
+                torchvision.utils.save_image(rendering_diffuse + torch.ones_like(rendering)*(1 - sky_mask),
+                                             os.path.join(renders_diffuse_path, view.image_name + ".png"))
+                torchvision.utils.save_image(rendering_specular*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
+                                             os.path.join(renders_specular_path, view.image_name + ".png"))
                 torchvision.utils.save_image(gt_image*eval_mask, os.path.join(gts_path, view.image_name + ".png"))
+                torchvision.utils.save_image(rendering_normal_view*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
+                                             os.path.join(renders_normals_view_path, view.image_name + ".png"))
 
                 img_names.append(view.image_name)
         
@@ -192,7 +215,8 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
                 rec_loss = Ll1 * (1-cfg.optimizer.lambda_dssim) + cfg.optimizer.lambda_dssim * Ssim
                 rec_losses.append(rec_loss)
 
-
+    std_error_rec_loss = torch.std(torch.tensor(rec_losses))/math.sqrt(len(rec_losses))
+    std_error_psnr = torch.std(torch.tensor(psnrs))/math.sqrt(len(psnrs))
     psnrs_dict = {img_name: psnr.item() for img_name, psnr in zip(img_names, psnrs)}
     mses_dict = {img_name: mse.item() for img_name, mse in zip(img_names, mses)}
     maes_dict = {img_name: mae.item() for img_name, mae in zip(img_names, maes)}
@@ -205,10 +229,12 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
     # Save metrics 
     with open(os.path.join(renders_path, "metrics.txt"), 'w') as f:
         print("  PSNR: {:>12.7f}".format(torch.tensor(psnrs).mean(), ".5"), file=f)
+        print("  PSNR_STDERROR: {:>12.7f}".format(std_error_psnr, ".5"), file=f)
         print("  MSE: {:>12.7f}".format(torch.tensor(mses).mean(), ".5"), file=f)
         print("  MAE: {:>12.7f}".format(torch.tensor(maes).mean(), ".5"), file=f)
         print("  SSIM: {:>12.7f}".format(torch.tensor(ssims).mean(), ".5"), file=f)
         print("  REC LOSS: {:>12.7f}".format(torch.tensor(rec_losses).mean(), ".5"), file=f)
+        print("  REC LOSS_STDERROR: {:>12.7f}".format(std_error_rec_loss, ".5"), file=f)
         print(f"  best PSNRs: {psnrs_dict}", file=f)
         print(f"  best MSEs: {mses_dict}", file=f)
         print(f"  best MAEs: {maes_dict}", file=f)
@@ -219,7 +245,7 @@ def render_and_evaluate_test_scenes(cfg, eval_all=False):
 def main(cfg: DictConfig):
     print("Rendering and evaluating with GT illumination" + cfg.dataset.model_path)
     cfg.dataset.eval = True
-    render_and_evaluate_test_scenes(cfg,  cfg.eval_all)
+    render_and_evaluate_test_scenes(cfg,  cfg.random_sun_angle)
 
     print("\nEnd")
 
@@ -232,7 +258,7 @@ if __name__ == "__main__":
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--test_config_path", type=str)
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--eval_all", action="store_true")
+    parser.add_argument("--random_sun_angle", action="store_true")
     args = parser.parse_args(sys.argv[1:])
 
     cl_args = [
@@ -240,7 +266,7 @@ if __name__ == "__main__":
         f"dataset.source_path={args.source_path}",
         f"dataset.test_config_path={args.test_config_path}",
         f"load_iteration={str(args.iteration)}",
-        f"+eval_all={args.eval_all}"
+        f"+random_sun_angle={args.random_sun_angle}"
     ]
 
     # Initialize system state (RNG)
