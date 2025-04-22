@@ -49,7 +49,7 @@ def create_window(window_size, channel):
 
 def ssim(img1_, img2_, window_size=11, size_average=True, mask=None):
     if mask is not None and torch.sum(mask) == 0:
-        return 0
+        return 1
     img1 = img1_.squeeze(0)
     img2 = img2_.squeeze(0)
     channel = img1.size(-3)
