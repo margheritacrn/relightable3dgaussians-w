@@ -277,6 +277,7 @@ class Relightable3DGW:
         self.mlp.cuda()
 
 
+    #TODO: update
     def optimize_embeddings_test(self, mse=False):
         "Optimization of the images embeddings for the test set. Optimization is performed on left half of the test images."
         print(f"Optimizing test images embeddings on the left half of each image")
