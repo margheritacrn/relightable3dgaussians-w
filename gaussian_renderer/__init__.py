@@ -67,7 +67,7 @@ def get_shaded_colors(envlight: EnvironmentLight, pos: torch.tensor, view_pos: t
 
 
 def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sky_sh: torch.tensor, sky_sh_degree: int, pipe,  bg_color : torch.Tensor, scaling_modifier = 1.0, debug=True,
-           specular=True, fix_sky=False, normals_in_world_space=False):
+           specular=True, fix_sky=False, normal_view=False):
     """
     Render the scene. 
     
@@ -116,6 +116,7 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
         scales = pc.get_scaling
         rotations = pc.get_rotation
 
+    sky_mask = viewpoint_camera.sky_mask.cuda().squeeze()
     sky_gaussians_mask = pc.get_is_sky.squeeze() # (N)
     positions = pc.get_xyz # (N, 3)
     albedo = pc.get_albedo # (N, 3)
@@ -127,8 +128,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
     dir_pp = (pc.get_xyz - view_pos)
     dir_pp_normalized = safe_normalize(dir_pp) # (N, 3)
     normal = pc.get_normal(dir_pp_normalized=dir_pp_normalized) # (N, 3)
-    if normals_in_world_space:
-        normal = pc.get_normal() # (N, 3)
 
     colors_precomp, diffuse_color, specular_color, sky_color = (torch.zeros(positions.shape[0], 3, dtype=torch.float32, device="cuda") for _ in range(4))
 
@@ -168,7 +167,6 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
         rotations = rotations,
         cov3D_precomp = cov3D_precomp)
 
-
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     out = {"render": rendered_image,
@@ -185,9 +183,8 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
     depth = depth.repeat(1,3)
     render_extras.update({"depth": depth})
 
-
+    # normal = normal[~sky_gaussians_mask]
     normal = 0.5 * normal + 0.5 # range (-1, 1) -> (0, 1)
-    normal[sky_gaussians_mask] = 1
     render_extras.update({"normal": normal})
 
     if debug:
@@ -207,6 +204,19 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
     out_extras = {}
     for k in render_extras.keys():
         if render_extras[k] is None: continue
+        """
+        if k == "normal":
+            image = rasterizer(
+                means3D = means3D[~sky_gaussians_mask],
+                means2D = means2D[~sky_gaussians_mask],
+                shs = None,
+                colors_precomp = render_extras[k],
+                opacities = opacity[~sky_gaussians_mask],
+                scales = scales[~sky_gaussians_mask],
+                rotations = rotations[~sky_gaussians_mask],
+                cov3D_precomp = cov3D_precomp)[0]
+        else:
+        """
         image = rasterizer(
             means3D = means3D,
             means2D = means2D,
@@ -220,6 +230,10 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
 
         if k == "normal" :
             out_extras[k] = (out_extras[k] - 0.5) * 2. # range (0, 1) -> (-1, 1)
+            if normal_view:
+                out_extras[k] = - out_extras[k].clone()
+            out_extras[k] = out_extras[k] * sky_mask + torch.ones_like(out_extras[k]) * (1 - sky_mask)
+
     torch.cuda.empty_cache()
 
     # Render alpha
@@ -251,11 +265,10 @@ def render(viewpoint_camera, pc : GaussianModel, envlight : EnvironmentLight, sk
 
 
     # Get surface normal from depth map.
-    out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, (out_extras['depth'][0] * (viewpoint_camera.sky_mask.cuda().squeeze())).unsqueeze(0))
-    #out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, (out_extras['depth'][0]).unsqueeze(0))
+    out_extras["normal_ref"]  = depth_to_normal(viewpoint_camera, (out_extras['depth'][0] * sky_mask).unsqueeze(0))
     out_extras["normal_ref"] = out_extras["normal_ref"].permute(2,0,1)
     out_extras["normal_ref"] = (out_extras["normal_ref"] * (out_extras["alpha"]).detach())
-    out_extras["normal_ref"] = out_extras["normal_ref"] + torch.ones_like(out_extras["normal_ref"]) * (1-viewpoint_camera.sky_mask.cuda().squeeze())
+    out_extras["normal_ref"] = out_extras["normal_ref"] + torch.ones_like(out_extras["normal_ref"]) * (1 - sky_mask)
     normalize_normal_inplace(out_extras["normal"], out_extras["alpha"][0])
     out.update(out_extras)
     return out
