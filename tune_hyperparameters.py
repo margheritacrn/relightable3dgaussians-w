@@ -22,7 +22,6 @@ def objective(trial: optuna.trial.Trial, output_path: str, nerfosr_path: str):
 
     psnrs = []
     
-    #torch.cuda.set_device(device_id)
     torch.cuda.empty_cache()
     torch.cuda.synchronize()
     cuda.select_device(0)
@@ -40,17 +39,17 @@ def objective(trial: optuna.trial.Trial, output_path: str, nerfosr_path: str):
 
         cfg.dataset.source_path = source_path
         cfg.dataset.model_path = model_path
-        cfg.optimizer.iterations = 1_000 #40_000
+        cfg.optimizer.iterations = 40_000
         cfg.dataset.logger = False
         cfg.dataset.eval = False
 
         # Update cfg with Optuna-suggested hyperparameters
         cfg.init_sh_mlp = False
         cfg.init_embeddings = False
-        cfg.optimizer.lambda_sky_gauss = trial.suggest_categorical("lambda_sky_gauss", [0.05, 0.5]) # 0 
-        cfg.optimizer.lambda_envlight = trial.suggest_categorical("lambda_envlight", [1, 10, 100])  # 2
-        cfg.optimizer.reg_normal_from_iter = trial.suggest_categorical("reg_normal_from_iter", [2_000, 3_000, 4_000, 5_000]) # 0
-        cfg.embeddings_dim = trial.suggest_categorical("appearance_embeddings_dim", [16, 32, 64]) # 1
+        cfg.optimizer.lambda_sky_gauss = trial.suggest_categorical("lambda_sky_gauss", [0.05, 0.5]) 
+        cfg.optimizer.lambda_envlight = trial.suggest_categorical("lambda_envlight", [1, 10, 100])
+        cfg.optimizer.reg_normal_from_iter = trial.suggest_categorical("reg_normal_from_iter", [2_000, 3_000, 4_000, 5_000])
+        cfg.embeddings_dim = trial.suggest_categorical("appearance_embeddings_dim", [16, 32, 64])
         # Train
         testing_iterations = []
         saving_iterations = [1, cfg.optimizer.iterations]
