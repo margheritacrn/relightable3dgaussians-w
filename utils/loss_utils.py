@@ -14,14 +14,14 @@ import torch.nn.functional as F
 import cv2
 from torch.autograd import Variable
 from math import exp
-from utils.image_utils import erode
 from utils.sh_utils import eval_sh
 import numpy as np
 from utils.general_utils import rand_hemisphere_dir
-from scene.NVDIFFREC import util
-from scene.NVDIFFREC.light import EnvironmentLight
 import random
 import torch.nn.functional as F
+
+
+TINY_NUMBER = 1e-6
 
 
 def l1_loss(network_output, gt, mask=None):
@@ -34,18 +34,22 @@ def l1_loss(network_output, gt, mask=None):
     else:
         return torch.abs((network_output - gt)).mean()
 
+
 def l2_loss(network_output, gt):
     return ((network_output - gt) ** 2).mean()
+
 
 def gaussian(window_size, sigma):
     gauss = torch.Tensor([exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
     return gauss / gauss.sum()
+
 
 def create_window(window_size, channel):
     _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
     _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
     window = Variable(_2D_window.expand(channel, 1, window_size, window_size).contiguous())
     return window
+
 
 def ssim(img1_, img2_, window_size=11, size_average=True, mask=None):
     if mask is not None and torch.sum(mask) == 0:
@@ -60,6 +64,7 @@ def ssim(img1_, img2_, window_size=11, size_average=True, mask=None):
     window = window.type_as(img1)
 
     return _ssim(img1, img2, window, window_size, channel, size_average, mask)
+
 
 def _ssim(img1, img2, window, window_size, channel, size_average=True, mask=None):
     img1 = img1[None,...]
@@ -101,7 +106,7 @@ def zero_one_loss(img):
     return loss
 
 
-def predicted_depth_loss(depth_map, mask=None):
+def smoothing_depth_loss(depth_map, mask=None):
     with torch.no_grad():
         avg_depth_map = depth_map.permute(1,2,0).data.clone().cpu().numpy()
         avg_depth_map = cv2.blur(avg_depth_map.astype(np.float32),(5,5))
@@ -132,57 +137,14 @@ def sky_depth_loss(depth_map, sky_mask, gamma = 0.02):
     return mean_depth_sky.detach(), loss
 
 
-def depth_loss_gaussians(mean_depth_sky, mean_depth_non_sky, gamma = 0.02):
+def depth_loss_gaussians(gaussians, camera, visibility_filter, gamma = 0.02):
     """The function compares the difference of the average depth of sky and non sky gaussians using an exponential function."""
-    loss = torch.exp(-gamma*(mean_depth_sky-mean_depth_non_sky))
-    return loss
-
-
-def predicted_normal_loss(normal, normal_ref, alpha=None):
-    """Computes the predicted normal supervision loss defined in Ref-NeRF."""
-    # normal: (3, H, W), normal_ref: (3, H, W), alpha: (3, H, W)
-    if alpha is not None:
-        device = alpha.device
-        weight = alpha.detach().cpu().numpy()[0]
-        weight = (weight*255).astype(np.uint8)
-
-        weight = erode(weight, erode_size=4)
-
-        weight = torch.from_numpy(weight.astype(np.float32)/255.)
-        weight = weight[None,...].repeat(3,1,1)
-        weight = weight.to(device) 
-    else:
-        weight = torch.ones_like(normal_ref)
-
-    w = weight.permute(1,2,0).reshape(-1,3)[...,0].detach()
-    n = normal_ref.permute(1,2,0).reshape(-1,3).detach()
-    n_pred = normal.permute(1,2,0).reshape(-1,3)
-    # Compute cos between n and n_pred, for them to be perfectly aligned it has to be 1
-    loss = (w*(1.0 - torch.sum(n * n_pred, axis=-1))).mean()
-    loss = loss.mean()
-
-    return loss
-
-
-def delta_normal_loss(delta_normal_norm, alpha=None):
-    # delta_normal_norm: (3, H, W), alpha: (3, H, W)
-    if alpha is not None:
-        device = alpha.device
-        weight = alpha.detach().cpu().numpy()[0]
-        weight = (weight*255).astype(np.uint8)
-
-        weight = erode(weight, erode_size=4)
-
-        weight = torch.from_numpy(weight.astype(np.float32)/255.)
-        weight = weight[None,...].repeat(3,1,1)
-        weight = weight.to(device) 
-    else:
-        weight = torch.ones_like(delta_normal_norm)
-
-    w = weight.permute(1,2,0).reshape(-1,3)[...,0].detach()
-    l = delta_normal_norm.permute(1,2,0).reshape(-1,3)[...,0]
-    loss = (w * l).mean()
-
+    sky_gaussians_mask = gaussians.get_is_sky.squeeze()
+    gaussians_depth = gaussians.get_depth(camera)
+    sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
+    avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
+    avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
+    loss = torch.exp(-gamma*(avg_depth_sky_gauss-avg_depth_non_sky_gauss))
     return loss
 
 
@@ -221,7 +183,7 @@ def envlight_loss(envlight_sh: torch.tensor, sh_degree: int, normals: torch.Tens
 
 
 def envl_sh_loss(sh_env: torch.tensor, sh_degree, N_samples: int=10):
-
+    """The function is taken from LumiGauss https://github.com/joaxkal/lumigauss."""
     shs_view = sh_env.repeat(N_samples, 1, 1)
     view_dir_unnorm =torch.empty(shs_view.shape[0], 3, device=shs_view.device).uniform_(-1,1)
     view_dir = view_dir_unnorm / view_dir_unnorm.norm(dim=1, keepdim=True)
@@ -277,9 +239,9 @@ def cam_depth2world_point(cam_z, pixel_idx, intrinsic, extrinsic):
     world_xyz = world_xyz[...,:3]
     return world_xyz, cam_xyz
 
-# from lumigauss
 
-TINY_NUMBER = 1e-6
+# From Lumigauss https://github.com/joaxkal/lumigauss
+
 
 def img2mse(x, y, mask=None):
     if mask is None:
@@ -290,6 +252,7 @@ def img2mse(x, y, mask=None):
         else:
             return torch.sum((x - y) * (x - y) * mask.unsqueeze(0)) / (torch.sum(mask)*x.shape[0] + TINY_NUMBER)
 
+
 def img2mae(x, y, mask=None):
     if mask is None:
         return torch.mean(torch.abs(x - y))
@@ -299,8 +262,10 @@ def img2mae(x, y, mask=None):
         else:
             return torch.sum(torch.abs(x - y) * mask.unsqueeze(0)) / (torch.sum(mask) * x.shape[0] + TINY_NUMBER)
 
+
 def mse2psnr(x):
     return -10. * torch.log(torch.tensor(x)+TINY_NUMBER) / torch.log(torch.tensor(10))
+
 
 def img2mse_image(x, y, mask=None):
     
