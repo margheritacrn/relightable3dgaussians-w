@@ -88,7 +88,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Normal regularization
         if iteration > cfg.optimizer.reg_normal_from_iter and cfg.optimizer.lambda_normal > 0:
-            rendered_normal = render_pkg["normal"]*occluders_mask * sky_mask
+            rendered_normal = render_pkg["normal"] * occluders_mask * sky_mask
             rendered_surf_normal = render_pkg["normal_ref"] * occluders_mask * sky_mask
             normal_consistency_loss =  (1 - (rendered_normal * rendered_surf_normal).sum(dim=0))[None]
             normal_consistency_loss = cfg.optimizer.lambda_normal * (normal_consistency_loss).mean()
@@ -108,12 +108,7 @@ def training(cfg, testing_iterations, saving_iterations):
 
         # Depth regularization
         if iteration > cfg.optimizer.reg_sky_gauss_depth_from_iter and cfg.optimizer.lambda_sky_gauss > 0:
-            sky_gaussians_mask = model.gaussians.get_is_sky.squeeze()
-            gaussians_depth = model.gaussians.get_depth(viewpoint_cam)
-            sky_gaussians_depth = gaussians_depth[(sky_gaussians_mask) & (visibility_filter)]
-            avg_depth_sky_gauss = torch.mean(sky_gaussians_depth)
-            avg_depth_non_sky_gauss = torch.mean(gaussians_depth[(~sky_gaussians_mask) & (visibility_filter)]).detach()
-            depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss * depth_loss_gaussians(avg_depth_sky_gauss, avg_depth_non_sky_gauss)
+            depth_loss_sky_gauss = cfg.optimizer.lambda_sky_gauss * depth_loss_gaussians(model.gaussians, viewpoint_cam, visibility_filter)
             loss += depth_loss_sky_gauss
             logs.update({"Depth loss": f"{depth_loss_sky_gauss:.{5}f}"})
 
