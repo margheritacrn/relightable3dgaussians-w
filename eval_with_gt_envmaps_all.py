@@ -74,13 +74,11 @@ def render_and_evaluate_test_scenes(cfg, random_sun_angle=False):
     gts_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "gt")
     renders_diffuse_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_diffuse")
     renders_specular_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_specular")
-    renders_normals_view_path = os.path.join(cfg.dataset.model_path, out_dir_name, "test", "iteration_{}".format(model.load_iteration), "renders_normals_view")
     makedirs(renders_path, exist_ok=True)
     makedirs(renders_unmasked_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
     makedirs(renders_diffuse_path, exist_ok=True)
     makedirs(renders_specular_path, exist_ok=True)
-    makedirs(renders_normals_view_path, exist_ok=True)
 
 
     ssims, psnrs, mses, maes, rec_losses = [], [], [], [], []
@@ -154,8 +152,8 @@ def render_and_evaluate_test_scenes(cfg, random_sun_angle=False):
         # Save best orientation of the gt envmap:
         np.save(os.path.join(renders_path, "best_envmap" + lighting_cond+".npy"), gt_envmap_sh_rot)
         render_best_angle_envmap = sh_utility.sh_render(gt_envmap_sh_rot.T, width = 360)
-        render_best_angle_envmap = torch.tensor(render_best_angle_envmap**(1/ 2.2))
-        render_best_angle_envmap =  np.array(render_best_angle_envmap*255).clip(0,255).astype(np.uint8)
+        render_best_angle_envmap = torch.tensor(render_best_angle_envmap ** (1/ 2.2))
+        render_best_angle_envmap =  np.array(render_best_angle_envmap * 255).clip(0,255).astype(np.uint8)
         render_best_angle_envmap = Image.fromarray(render_best_angle_envmap)
         render_best_angle_envmap.save(os.path.join(renders_path, "best_angle_rot_envmap"+lighting_cond+".jpg"))
 
@@ -177,25 +175,22 @@ def render_and_evaluate_test_scenes(cfg, random_sun_angle=False):
 
                 # Render
                 model.envlight.set_base(gt_envmap_sh_rot)
-                render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular, normal_view=True)
+                render_pkg = render(view, model.gaussians, model.envlight, sky_sh, cfg.sky_sh_degree, cfg.pipe, background, debug=False, fix_sky=True, specular=cfg.specular)
                 rendering = torch.clamp(render_pkg["render"], 0.0, 1.0)
-                rendering_masked = torch.clamp(render_pkg["render"]*eval_mask, 0.0, 1.0)
+                rendering_masked = torch.clamp(render_pkg["render"] * eval_mask, 0.0, 1.0)
                 rendering_diffuse = torch.clamp(render_pkg["diffuse_color"], 0.0, 1.0)
                 rendering_specular = torch.clamp(render_pkg["specular_color"], 0.0, 1.0)
-                rendering_normal_view = 0.5 + (0.5*render_pkg["normal"])
                 torch.cuda.synchronize()
                 gt_image = gt_image[0:3, :, :]
                 torchvision.utils.save_image(rendering_masked, os.path.join(renders_path, view.image_name + "_masked.png"))
                 torchvision.utils.save_image(rendering, os.path.join(renders_unmasked_path, view.image_name + ".png"))
-                torchvision.utils.save_image(rendering*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
+                torchvision.utils.save_image(rendering * sky_mask + torch.ones_like(rendering) * (1 - sky_mask),
                                                 os.path.join(renders_unmasked_path, view.image_name + "_masked_sky.png"))
-                torchvision.utils.save_image(rendering_diffuse + torch.ones_like(rendering)*(1 - sky_mask),
+                torchvision.utils.save_image(rendering_diffuse + torch.ones_like(rendering) * (1 - sky_mask),
                                              os.path.join(renders_diffuse_path, view.image_name + ".png"))
-                torchvision.utils.save_image(rendering_specular*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
+                torchvision.utils.save_image(rendering_specular * sky_mask + torch.ones_like(rendering) * (1 - sky_mask),
                                              os.path.join(renders_specular_path, view.image_name + ".png"))
-                torchvision.utils.save_image(gt_image*eval_mask, os.path.join(gts_path, view.image_name + ".png"))
-                torchvision.utils.save_image(rendering_normal_view*sky_mask + torch.ones_like(rendering)*(1 - sky_mask),
-                                             os.path.join(renders_normals_view_path, view.image_name + ".png"))
+                torchvision.utils.save_image(gt_image * eval_mask, os.path.join(gts_path, view.image_name + ".png"))
 
                 img_names.append(view.image_name)
         
@@ -208,7 +203,7 @@ def render_and_evaluate_test_scenes(cfg, random_sun_angle=False):
                 gt_image_np = gt_image.cpu().detach().numpy().transpose(1, 2, 0)
                 
                 _, full = ssim_skimage(rendered_np, gt_image_np, win_size=5, channel_axis=2, full=True, data_range=1.0)
-                mssim_over_mask = (torch.tensor(full).cuda()*eval_mask.unsqueeze(-1)).sum() / (3*eval_mask.sum())
+                mssim_over_mask = (torch.tensor(full).cuda() * eval_mask.unsqueeze(-1)).sum() / (3 * eval_mask.sum())
                 ssims.append(mssim_over_mask)
                 Ll1 = l1_loss(rendering, gt_image, mask=eval_mask.expand_as(gt_image))
                 Ssim = (1.0 - mssim_over_mask)
