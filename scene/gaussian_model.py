@@ -111,6 +111,7 @@ class GaussianModel:
     def get_covariance(self, scaling_modifier = 1):
         return self.covariance_activation(self.get_scaling, scaling_modifier, self._rotation)
     
+
     def get_normal(self, dir_pp_normalized=None, normalize=False):
         normal_axis = get_minimum_axis(self.get_scaling, build_rotation(self.get_rotation))
         if dir_pp_normalized is not None:
@@ -119,6 +120,7 @@ class GaussianModel:
             normal_axis = torch.nn.functional.normalize(normal_axis, p=2, 
                                                         dim=1)
         return normal_axis
+
 
     def get_depth(self, viewpoint_camera):
         p_hom = torch.cat([self.get_xyz, torch.ones_like(self.get_xyz[...,:1])], -1).unsqueeze(-1)
@@ -132,12 +134,10 @@ class GaussianModel:
     def get_albedo(self):
         return self.material_properties_activation(self._albedo)
 
-    
 
     @property
     def get_metalness(self):
         return self.material_properties_activation(self._metalness)
-
 
 
     @property
@@ -228,6 +228,7 @@ class GaussianModel:
             gmask[torch.logical_not(gmask)] = torch.logical_or(gmask[torch.logical_not(gmask)], mask)
 
         return points[gmask], sky_distance, scene_center
+
 
     @torch.no_grad()
     def augment_with_sky_gaussians(self, cameras):
