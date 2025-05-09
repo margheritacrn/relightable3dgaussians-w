@@ -11,6 +11,7 @@ import imageio.v3 as im
 import matplotlib.pyplot as plt
 import torch
 import spaudiopy
+from matplotlib import pyplot as plt
 from utils.sh_additional_utils import get_coefficients_from_image
 
 
@@ -25,12 +26,12 @@ def find_folder(base_path, folder_name):
 
 
 
-def scale_saturated_pixels_and_extract_sh(img_path, scale_high, lmax=4, threshold=0.999):
+def scale_saturated_pixels_and_extract_sh(rendered_sh_path, scale_high, lmax=4, threshold=0.999):
     
-    img = plt.imread(img_path)
-    img = torch.from_numpy(img).float() / 255
-    img[img > threshold] *= scale_high
-    coeffs = get_coefficients_from_image(img.numpy(), lmax)
+    rendered_sh = plt.imread(rendered_sh_path)
+    rendered_sh = torch.from_numpy(rendered_sh).float() / 255
+    rendered_sh[rendered_sh > threshold] *= scale_high
+    coeffs = get_coefficients_from_image(rendered_sh.numpy(), lmax)
     return coeffs
 
 
@@ -73,14 +74,11 @@ def process_gt_envmaps(nerfosr_path: str, lmax: int=4, rotate=False):
         print(f"Scene: {scene}")
         gtenvmapsdir_path = find_folder(os.path.join(nerfosr_path, scene), "ENV_MAP_CC")
         scale_high = 10
-        if scene == "st":
-            scale_high = 30
         if gtenvmapsdir_path is None:
             gtenvmapsdir_path = os.path.join(nerfosr_path, scene + "/test/ENV_MAP_CC")
         for lighting_cond in os.listdir(gtenvmapsdir_path):
             lighting_cond_path = os.path.join(gtenvmapsdir_path, lighting_cond)
             for gtenvmap_filename in os.listdir(lighting_cond_path):
-                # if "rotated" not in gtenvmap_filename and gtenvmap_filename[-4:] == ".jpg": 
                 print(f"Processing {gtenvmap_filename}")
                 # Rotate
                 gtenvmap_jpg_path = os.path.join(lighting_cond_path, gtenvmap_filename)
@@ -90,27 +88,15 @@ def process_gt_envmaps(nerfosr_path: str, lmax: int=4, rotate=False):
                     np.savetxt(gtenvmap_jpg_path[:-4]+f'rotated_SH{lmax}.txt', gt_envmap_sh.T)
                 else:
                     np.savetxt(gtenvmap_jpg_path[:-4]+f'SH{lmax}.txt', gt_envmap_sh.T)
-                """"
-                if rotate:
-                    # Rotate envmap around x axis
-                    _, gtenvmap_sh_coeffs = rotate_envmap(gt_envmap, angles=[0,0,-np.pi/2], return_sh=True, lmax=lmax, resize_height=180,
-                                                        save_jpg_path=gtenvmap_jpg_path[:-4]+"_rotated.jpg") # angles z,y,x
-                    np.save(gtenvmap_jpg_path[:-4]+f'rotatedSH{lmax}.npy', gtenvmap_sh_coeffs)
-                    np.savetxt(gtenvmap_jpg_path[:-4]+f'rotatedSH{lmax}.txt', gtenvmap_sh_coeffs)
-                else:
-                    gtenvmap_sh_coeffs = sh_utility.get_coefficients_from_image(gt_envmap.data, lmax)
-                    np.savetxt(gtenvmap_jpg_path[:-4]+f'SH{lmax}.txt', gtenvmap_sh_coeffs)"
-                """
-                
-                # SH reconstruction 
+                # Envmap SH reconstruction 
                 rendered_sh = sh_utility.sh_render(gt_envmap_sh.T, width = 360)
-                rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min()) * 255
-                rendered_sh = rendered_sh.astype(np.uint8)
-                reconstructed_envmap = Image.fromarray(rendered_sh)
+                rendered_sh = torch.tensor(rendered_sh** (1/ 2.2))
+                rendered_sh =  np.array(rendered_sh * 255).clip(0,255).astype(np.uint8)
+                rendered_sh = (rendered_sh - rendered_sh.min()) / (rendered_sh.max() - rendered_sh.min())
                 if rotate:
-                    reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"rotatedSH{lmax}rec.jpg")
+                    plt.imsave(gtenvmap_jpg_path[:-4]+f"rotatedSH{lmax}rec.jpg", rendered_sh)
                 else:
-                    reconstructed_envmap.save(gtenvmap_jpg_path[:-4]+f"SH{lmax}rec.jpg")
+                    plt.imsave(gtenvmap_jpg_path[:-4]+f"SH{lmax}rec.jpg")
 
 
 def main(nerfosr_path: str, lmax: int, rotate: bool):
