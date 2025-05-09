@@ -133,7 +133,6 @@ class Relightable3DGW:
         train_data = TensorDataset(imgs, target_sh[:, :(self.config.envlight_sh_degree + 1)**2, :])
         batch_size = 32
         dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-        #self.envlight_sh_mlp.initialize(dataloader, epochs = 100)
         self.mlp.initialize_sh_envl(dataloader, epochs = 100)
 
 
@@ -173,7 +172,6 @@ class Relightable3DGW:
                     image_embed = self.embeddings_test(viewpoint_cam_id)
                 else:
                     image_embed = self.embeddings(viewpoint_cam_id)
-                # envlights_sh[viewpoint_cam.image_name] = self.envlight_sh_mlp(image_embed).detach().cpu().numpy()
                 envlights_sh[viewpoint_cam.image_name] = self.mlp(image_embed)[0].detach().cpu().numpy()
         return envlights_sh
     
@@ -192,7 +190,6 @@ class Relightable3DGW:
                     image_embed = self.embeddings_test(viewpoint_cam_id)
                 else:
                     image_embed = self.embeddings(viewpoint_cam_id)
-                # skys_sh[viewpoint_cam.image_name] = self.sky_sh_mlp(image_embed).detach().cpu().numpy()
                 skys_sh[viewpoint_cam.image_name] = self.mlp(image_embed)[1].detach().cpu().numpy()
         return skys_sh
     
